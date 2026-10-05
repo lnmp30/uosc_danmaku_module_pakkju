@@ -68,18 +68,20 @@ options = {
     -- 是否允许不同类型（滚动/顶部/底部）的弹幕合并
     -- pakku.js: CROSS_MODE = true
     pakku_cross_mode = true,
-    -- 合并数量标记位置：off / suffix / prefix，如 恭喜₍₁₂₎
-    --! 有意偏离 pakku.js 的 DANMU_MARK='prefix'，沿用 uosc_danmaku 习惯的 xN 后缀位置
+    -- 合并数量标记位置：off / suffix / prefix，如 恭喜(12)
+    --! 有意偏离 pakku.js 的 DANMU_MARK='prefix'，沿用 uosc_danmaku 习惯的后缀位置
     pakku_mark = "suffix",
-    -- 标记是否用下标数字：yes -> ₍₁₂₎，no -> [x12]
-    -- pakku.js: DANMU_SUBSCRIPT = true
-    pakku_mark_subscript = true,
-    -- 标记的额外放大倍数，用来补偿下标字形天生偏小的问题。
-    -- 实测 Microsoft YaHei Bold：下标数字 ₀-₉ 只有正文数字的 55% 高。
+    -- 标记是否用下标数字：no -> (12) 普通数字跟随正文字体，yes -> ₍₁₂₎ 下标
+    --! pakku.js 的默认是 DANMU_SUBSCRIPT = true（下标），这里默认关掉：
+    --! 下标字形只有正文字体的五成多高（实测 47%~63%，随字体浮动），
+    --! 用普通数字 + 半角括号观感更稳定，也不占额外字号预算
+    pakku_mark_subscript = false,
+    -- 下标标记的额外放大倍数，用来补偿下标字形天生偏小的问题。
+    -- 实测 Microsoft YaHei Bold：下标数字 ₀-₉ 只有正文数字的 55.4% 高。
     --   1.0  = 不放大（pakku.js 的原始观感，标记明显偏小）
     --   1.46 = 下标括号与正文数字同高
-    --   1.8  = 下标数字与正文数字同高（当前默认）
-    --! 只对下标标记生效；mark_subscript=no 时该项无效
+    --   1.8  = 下标数字与正文数字同高
+    --! 只对下标标记生效，mark_subscript=no（默认）时该项完全无效
     pakku_mark_scale = 1.8,
     -- 合并数量超过该值时才会添加标记
     -- pakku.js: MARK_THRESHOLD = 1

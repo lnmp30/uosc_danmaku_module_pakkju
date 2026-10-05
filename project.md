@@ -59,7 +59,7 @@ mpv_pakkujs/
 
 | 文件 | 状态 | 说明 |
 |---|---|---|
-| `portable_config/scripts/uosc_danmaku/modules/pakku.lua` | **新增** | 1391 行 / 57 KB，算法本体 |
+| `portable_config/scripts/uosc_danmaku/modules/pakku.lua` | **新增** | 1398 行 / 57 KB，算法本体 |
 | `portable_config/scripts/uosc_danmaku/modules/options.lua` | 修改 | 新增 23 个 `pakku_*` 选项默认值（对齐 pakku.js） |
 | `portable_config/scripts/uosc_danmaku/modules/parse.lua` | 修改 | 合并分支接入、`merge_mark` 加粗与字号补偿、字号缩放 |
 | `portable_config/scripts/uosc_danmaku/main.lua` | 修改 | 加载顺序里加 `require("modules/pakku")` |
@@ -137,11 +137,11 @@ mpv_pakkujs/
 | **1. 拼音字典** | 104–539 | `PINYIN_SRC` 数据块（116–514）、`pinyin_dict()` 懒加载（519） |
 | **2. 文本预处理** | 542–670 | `ENDING_CHARS`、`WIDTH_TABLE`、`normalize_spaces()`（581）、`quantifier_to_lua()`（613）、`M.normalize()`（635） |
 | **3. 相似度计算** | 673–771 | `freq_of_chars` `freq_of_pinyin` `freq_distance` `make_bigrams` `gram_cosine`、`M.edit_distance`（752） `M.pinyin_distance`（759） `M.cosine_similarity`（767） |
-| **4. 配置** | 774–877 | `pick` `tonum` `tobool`、`M.build_config()`（806），`mark_subscript` 在 806 段内 |
-| **5. 聚类** | 880–1015 | `M.build_ir()`（884） `M.check_similar()`（912） `cluster()`（969） |
-| **6. 字号放大 / 标记** | 1018–1078 | `enlarge_scale()`、`SUBSCRIPT_DIGITS`、`to_subscript()`（1040）、`make_mark_tag()`（1060）、`make_mark()`（1071） |
-| **7. 密度调控** | 1081–1171 | `M.dispval()` `judge_drop()` `M.adjust_density()`（1107） |
-| **8. 对外主入口** | 1174–1391 | `choose_display_text()`（1178） `dominant_reason()` `M.merge()`（1243） |
+| **4. 配置** | 774–879 | `pick` `tonum` `tobool`、`M.build_config()`（806），标记相关配置都在这一段 |
+| **5. 聚类** | 882–1017 | `M.build_ir()`（886） `M.check_similar()`（914） `cluster()`（971） |
+| **6. 字号放大 / 标记** | 1020–1085 | `enlarge_scale()`、`SUBSCRIPT_DIGITS`、`to_subscript()`（1045）、`make_mark_tag()`（1067）、`make_mark()`（1078） |
+| **7. 密度调控** | 1088–1178 | `M.dispval()` `judge_drop()` `M.adjust_density()`（1114） |
+| **8. 对外主入口** | 1181–1398 | `choose_display_text()`（1185） `dominant_reason()` `M.merge()`（1250） |
 
 ### 合并标记的生成
 
@@ -151,25 +151,38 @@ mpv_pakkujs/
 
 | 配置 | 产出 |
 |---|---|
-| `mark=suffix`（默认）+ `mark_subscript=yes`（默认） | `恭喜₍₁₂₎` |
-| `mark=suffix` + `mark_subscript=no` | `恭喜[x12]` |
-| `mark=prefix` + `mark_subscript=yes` | `₍₁₂₎恭喜` |
+| `mark=suffix`（默认）+ `mark_subscript=no`（默认） | `恭喜(12)` |
+| `mark=suffix` + `mark_subscript=yes` | `恭喜₍₁₂₎` |
+| `mark=prefix` + `mark_subscript=no` | `(12)恭喜` |
 | `mark=off` | `恭喜`（`merge_mark` 为空串） |
 
-下标数字用 Unicode 的 Superscripts and Subscripts 区段：
-数字 `U+2080`–`U+2089`，括号 `₍ U+208D` / `₎ U+208E`。
-`to_subscript()` 逐位转换并反转，对应 pakku.js 的 `to_subscript()`。
+默认形式 `(12)` 是**本项目自选的**，不对应 pakku.js 的任何取值：
+pakku.js 只有下标 `₍₁₂₎` 和 `[x12]` 两种，没有括号数字。
 
-> 字形可用性：在本项目的字体环境下（Microsoft YaHei / Noto Sans CJK），
-> mpv + libass 渲染这些码位**没有**任何缺字形告警，实测 735 处标记全部正常。
+#### 为什么放弃下标
 
-#### 标记的字号补偿（pakku_mark_scale）
+pakku.js 默认 `DANMU_SUBSCRIPT=on`，即 `₍₁₂₎`。下标字形的问题有两个：
+
+1. **天生小**：Microsoft YaHei 下下标数字只有正文数字的 55.4% 高
+2. **比例随字体浮动**：实测 7 个字体在 47.0%（MS Gothic）~ 63.3%（Verdana）之间
+
+也就是说同一个 `\fs` 值在不同字体、不同机器上观感不一致，没法得到一个
+稳定的默认值。要补偿只能加 `\fs`（就是 `pakku_mark_scale` 做的事），
+但补偿倍数本身又依赖字体。
+
+改成普通数字 + 半角括号 `(12)` 后，标记直接跟随正文字体，
+既不需要补偿、也不会随字体变样，横向占用还更小。
+
+下标形式仍保留在 `mark_subscript=yes` 后面（代码里 `to_subscript()` 和
+`SUBSCRIPT_LPAREN/RPAREN` 都没删），想要 pakku.js 原始观感随时可以切回去。
+
+#### 下标模式下的字号补偿（pakku_mark_scale）
 
 **pakku.js 没有给标记单独设过字号** —— `make_mark_meta()` 只是把
 `₍${to_subscript(cnt)}₎` 拼到文本上，剩下的交给 B 站播放器按弹幕字号渲染。
 换句话说「pakku 的字号」就是弹幕本身的字号，没有额外参数可抄。
 
-`₍₁₂₎` 之所以显得小，是因为下标字形本身就这么小。用
+所以在 `mark_subscript=yes` 时，本项目用 `\fs` 做补偿。用
 `System.Drawing`（GDI+ 与 libass 走同一套字体轮廓）量 Microsoft YaHei Bold
 在 size=100 下的墨迹高度：
 
@@ -180,17 +193,15 @@ mpv_pakkujs/
 | 下标括号 `₍₎` | 53.71 | 68.3% |
 | 完整标记 `₍₁₂₎` | 53.71 | 68.3% |
 
-所以 `pakku_mark_scale` 提供的是**补偿**而不是「抄」：
-
-| 取值 | 效果 |
+| `pakku_mark_scale` | 效果 |
 |---|---|
 | `1.0` | 不放大，完全还原 pakku.js 的原始观感（标记明显偏小） |
 | `1.46` | 下标括号与正文数字同高 |
-| `1.8`（默认） | 下标数字与正文数字同高，视觉上就是正常大小的数字 |
+| `1.8`（默认值） | 下标数字与正文数字同高，视觉上就是正常大小的数字 |
 
 实现上由 `parse.lua:760` 起算：`\fs` 取 `event_fontsize × pakku_mark_scale`，
 标签形如 `{\b1\fs90}₍₅₎`。**只对下标标记生效**，
-`mark_subscript=no` 时该项被忽略（`[xN]` 用的是普通字形，不需要补偿）。
+`mark_subscript=no`（默认）时 `mark_scale` 被强制为 1，标签退化成 `{\b1}(5)`。
 
 > 下标数字在 Microsoft YaHei 下是**贴着基线**的（底部 106.83 vs 正文数字
 > 107.13），所以只需要放大、不需要再补 `\rise`。
@@ -214,7 +225,7 @@ mpv_pakkujs/
 | `pakku_representative_percent` | 20 | `REPRESENTATIVE_PERCENT` |
 | `pakku_mode_elevation` | true | `MODE_ELEVATION` |
 | `pakku_mark` | `suffix` | `DANMU_MARK`（pakku.js 是 `prefix`） |
-| `pakku_mark_subscript` | true | `DANMU_SUBSCRIPT` |
+| `pakku_mark_subscript` | false | `DANMU_SUBSCRIPT`（pakku.js 是 `true`） |
 | `pakku_mark_scale` | 1.8 | **无对应项**（pakku.js 不给标记单独设字号，见上） |
 | `pakku_mark_threshold` | 1 | `MARK_THRESHOLD` |
 | `pakku_forcelist` | 23333 / 66666 | `FORCELIST` |
@@ -223,10 +234,10 @@ mpv_pakkujs/
 **三处有意偏离**（都写在 `options.lua` 的注释里）：
 
 1. **标记的位置**：`pakku_mark=suffix`。pakku.js 默认 `DANMU_MARK='prefix'`，
-   标在弹幕开头（`₍₁₂₎文本`）；本实现按使用习惯标在**末尾**（`文本₍₁₂₎`）。
-2. **标记的字号**：`pakku_mark_scale=1.8`。pakku.js 不设，标记按弹幕字号渲染，
-   下标字形只有正文数字的 55% 高，看着偏小。本实现用 `\fs` 补偿到与正文数字同高。
-   调到 `1` 即完全还原 pakku.js 的观感。
+   标在弹幕开头（`(12)文本`）；本实现按使用习惯标在**末尾**（`文本(12)`）。
+2. **标记的字形**：`pakku_mark_subscript=false` → `(12)`。pakku.js 默认用下标
+   `₍₁₂₎`，本实现改用普通数字跟随正文字体。理由见上一节。
+   `(12)` 这个具体形式在 pakku.js 里没有对应项（它只有 `₍₁₂₎` 和 `[x12]`）。
 3. `pakku_enable` 在库层面（`options.lua`）默认仍是 `false`，
    但本项目自带的 `uosc_danmaku.conf` 里显式写了 `pakku_enable=yes`。
    这样库升级不会突然改变已有用户的行为，而本项目装好即用。
@@ -281,8 +292,8 @@ pakku.pinyin_group_count()          -- 拼音组数量（自检用，应为 398�
 | 文本预处理 | `modules/pakku.lua:436` | `pakku.lua:635` `M.normalize()` | 空格处理改成逐字符，见 §10 |
 | `M.edit_distance` | `modules/pakku.lua:488` | `pakku.lua:752` | 算法一致 |
 | `M.cosine_similarity` | `modules/pakku.lua:522` | `pakku.lua:767` | 算法一致（未采用 C++ 的环绕 bigram） |
-| `cluster` | `modules/pakku.lua:578` | `pakku.lua:969` | 一致，自后向前扫描窗口 |
-| 密度调控 | 未给行号 | `pakku.lua:1107` `M.adjust_density()` | 按 `post_combine.ts` 实现 |
+| `cluster` | `modules/pakku.lua:578` | `pakku.lua:971` | 一致，自后向前扫描窗口 |
+| 密度调控 | 未给行号 | `pakku.lua:1114` `M.adjust_density()` | 按 `post_combine.ts` 实现 |
 
 文章的默认值参数与 pakku.js 官方默认不同（文章写 `threshold` 短、
 放大「10 条起、以 10 为底」）。本实现**以 pakku.js 的 `DEFAULT_CONFIG` 为准**，
@@ -367,8 +378,8 @@ if code % 64 > 0 then f[code % 64] += 1 end
 | `merge_count` | 该簇合并了多少条原始弹幕 |
 | `merge_scale` | 字号系数（放大 >1，密度缩小时 <1，正常 =1） |
 | `merge_reason` | 命中判定：`identical` / `edit` / `pinyin` / `cosine` / `orig` |
-| `merge_mark` | 标记本体，如 `₍₁₂₎`；未加标记时为空串 `""` |
-| `text` | 合并后带标记的文本，如 `恭喜₍₁₂₎` |
+| `merge_mark` | 标记本体，如 `(12)`；未加标记时为空串 `""` |
+| `text` | 合并后带标记的文本，如 `恭喜(12)` |
 
 `parse.lua` 依赖两个字段：
 
@@ -444,8 +455,8 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 | 字号基准不同 | pakku.js 假设基准字号 25，uosc_danmaku 默认 `fontsize=50`，dispval 按 `(size/25)^1.5` 会翻倍，所以 `pakku_shrink_threshold` / `pakku_drop_threshold` 的数值需要相应放大 |
 | ASS 标记 | `{\b1\i1}` 是「粗体 + **斜体**」，`\i1` 就是斜体开关。合并标记只需要粗体，写成 `{\b1}` 即可；0.1.0 版本误带了 `\i1`，后缀会显示成斜体 |
 | 加粗不要用正则猜 | 早期写法 `gsub("x(%d+)$", ...)` 既会把正文里恰好以 `x12` 结尾的弹幕误加粗，也锁死了标记的样式。现在由 `pakku.lua` 给出 `merge_mark`，`parse.lua` 用**明文比对**定位（先试末尾、再试开头）后插 `{\b1}`，换任何标记样式都不用动渲染层 |
-| 下标字符的字体覆盖 | 标记用的 `U+2080-2089` / `U+208D-E` 不在基本区，字体缺字形时会显示成方框。本项目字体（Microsoft YaHei / Noto Sans CJK）渲染正常；换字体后可用 `--msg-level=all=v` 观察 libass 有无缺字形告警 |
-| 下标字形天生小 | 同一字号下 `₀-₉` 只有正文数字的 55% 高，直接拼上去会显得很小。解决方式不是换字体而是 `\fs` 补偿，见 §6「标记的字号补偿」 |
+| 下标字符的字体覆盖 | 只在 `mark_subscript=yes` 时相关：`U+2080-2089` / `U+208D-E` 不在基本区，字体缺字形时会显示成方框。本项目字体（Microsoft YaHei / Noto Sans CJK）渲染正常；换字体后可用 `--msg-level=all=v` 观察 libass 有无缺字形告警 |
+| 下标字形天生小且随字体浮动 | 同一字号下 `₀-₉` 只有正文数字的 55% 高，而且实测 7 个字体在 47%~63% 之间，没有稳定的默认值可调。这正是默认放弃下标、改用 `(12)` 的原因，见 §6 |
 | mpv 的 `--vo=image` 不含 OSD | 想截图验证弹幕/标记渲染时，`--vo=image` 产出的是**纯视频帧**，OSD 完全不会被合成进去（实测连 `--osd-msg1` 都不出现）。要么用 `--vo=gpu` + `window` 模式截图，要么直接量字体轮廓（本项目采用后者） |
 | 测试时 `--script-opts` 会被覆盖 | mpv 的 `script-opts` 是单个字符串选项，**重复传会后者覆盖前者**。要一次传多个必须用逗号：`--script-opts=a-b=1,a-c=2` |
 
@@ -478,10 +489,10 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 | `pinyin_distance("你","我")` | `> 0` |
 | `pinyin_group_count()` | `398` |
 | `build_config({})` 的 17 个字段 | 全部等于 §6 表里的 pakku.js 默认值 |
-| 合并 3 条相同弹幕后的 `text` | `恭喜₍₃₎`，`merge_mark == "₍₃₎"` |
+| 合并 3 条相同弹幕后的 `text` | `恭喜(3)`，`merge_mark == "(3)"` |
 | `to_subscript` 覆盖多位数 | 1/2/5/9/10/12/23/47/69/100/1234 → `₁`…`₁₂₃₄` |
-| `mark_subscript=false` | 标记变成 `[x3]` |
-| `mark=prefix` | 文本变成 `₍₃₎恭喜` |
+| `mark_subscript=true` | 标记变成 `₍₃₎`（下标形式） |
+| `mark=prefix` | 文本变成 `(3)恭喜` |
 | `mark=off` | `merge_mark == ""`，文本保持 `恭喜` |
 | 未合并的单条且正文以 `x12` 结尾 | `merge_count == 1`、`merge_mark == ""`，`text` 保持原文 |
 
@@ -490,13 +501,13 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 工作区自带 3 集弹幕（合计 20086 条），跑一遍确认合并数量和耗时：
 
 ```
-03   6592 -> 4773   306ms  最多₍₆₀₎
-04   6702 -> 4884   314ms  最多₍₆₉₎
-07   6792 -> 4709   307ms  最多₍₄₇₎
+03   6592 -> 4773   306ms  最多(60)
+04   6702 -> 4884   314ms  最多(69)
+07   6792 -> 4709   307ms  最多(47)
 合计 20086 -> 14366（71.5%），平均 309ms/集
 ```
 
-期望的 top 结果形态：`？？？？？？？₍₆₀₎`、`kksk₍₄₆₎`、`👍...👍₍₆₉₎`、`波门₍₄₇₎`
+期望的 top 结果形态：`？？？？？？？(60)`、`kksk(46)`、`👍...👍(69)`、`波门(47)`
 这类刷屏弹幕。
 
 ### 11.3 端到端跑 mpv
@@ -527,7 +538,14 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 ```
 
 验证渲染层可以临时在 `convert_danmaku_to_ass_events` 末尾把 `ass_events` dump 到文件，
-检查标记格式与字号：
+检查标记格式与字号（下面是**默认模式**，普通数字跟随正文字体）：
+
+```
+0.00  50  {\pos(960, 869)}{\c&HFFFFFF&}2026/2/5簽到{\b1}(5)
+2.00  72  {\move(2028, 251, -108, 251)}{\c&HFFFFFF&}簽{\b1}(10)
+```
+
+下标模式（`mark_subscript=yes`）下才会带 `\fs`：
 
 ```
 0.00  50  {\pos(960, 869)}{\c&HFFFFFF&}2026/2/5簽到{\b1\fs90}₍₅₎
@@ -538,17 +556,18 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 
 | 检查 | 期望 |
 |---|---|
+| 默认模式：含 `{\b1}(N)` 的行数 | `> 0`（本次实测 735） |
+| 默认模式：含 `\fs` 的行数 | `0` |
+| 默认模式：含下标 `₍` 的行数 | `0` |
+| 默认模式：含旧式 `[xN]` 的行数 | `0` |
 | 含 `\i1`（斜体）的行数 | `0` |
-| 含 `{\b1\fsN}₍M₎` 的行数 | `> 0`（本次实测 735） |
-| `\fsN` 的值与 `event_fontsize × pakku_mark_scale` 是否一致 | 全部一致（脚本逐条算过，735/735） |
-| 含下标 `₍` 但不含 `\fs` 的行数 | `0` |
-| `mark_subscript=no` 时含 `[xN]` 的行数 | 735，且 `\fs` 出现 `0` 次 |
+| 下标模式：含 `{\b1\fsN}₍M₎` 的行数 | `> 0`，且 `\fsN == event_fontsize × pakku_mark_scale`（735/735 一致） |
 | 字号分布（第 2 列） | 从 `50` 起，最大不超过 `100`（即 2 倍上限） |
-| libass 缺字形告警 | 无（下标码位 `U+2080-2089` / `U+208D-E` 在本项目字体下可渲染） |
+| libass 缺字形告警 | 无 |
 
 > 注意区分两个字号：dump 第 2 列的 `font_size` 是**弹幕正文**的字号（受
-> `pakku_enlarge_*` 控制，上限 100）；标记的 `\fs` 是在它基础上再乘
-> `pakku_mark_scale`，所以会出现 `\fs130` 这种超过 100 的值，属正常。
+> `pakku_enlarge_*` 控制，上限 100）；只有下标模式下标记才会有独立的 `\fs`，
+> 且会超过 100（如 `\fs130`），属正常。默认模式(`(12)`)没有独立字号。
 
 ### 11.4 语法检查
 
@@ -563,8 +582,8 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 ### 加一条新的相似判定规则
 
 1. 在 §3 里写判定函数（输入两条 `ir`，输出 `true/false`）
-2. 在 `M.check_similar()`（`pakku.lua:912`）的四级判定链里插入，注意顺序即优先级
-3. 若需要新的预计算量，加进 `M.build_ir()`（`pakku.lua:884`）
+2. 在 `M.check_similar()`（`pakku.lua:914`）的四级判定链里插入，注意顺序即优先级
+3. 若需要新的预计算量，加进 `M.build_ir()`（`pakku.lua:886`）
 4. 在 `dominant_reason()` 的 `rank` 表里给新 reason 一个权重
 5. 在 `stats` 表里加同名字段，`M.merge()` 会自动统计
 6. 若要有独立开关，按 §9 的 4 处套路加选项
@@ -582,7 +601,7 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 
 ### 调整密度策略
 
-`M.adjust_density()`（`pakku.lua:1107`）里的常量：
+`M.adjust_density()`（`pakku.lua:1114`）里的常量：
 
 | 常量 | 值 | 含义 |
 |---|---|---|
@@ -595,13 +614,13 @@ pakku.js 那边用的是 `proto_likecount`）。
 
 ### 改合并后的展示文本
 
-`choose_display_text()`（`pakku.lua:1178`）：
+`choose_display_text()`（`pakku.lua:1185`）：
 先按预处理文本分组取最高频，并列时取长度中位数；
 `pakku_normalize_display=no` 时改显示该组里出现最多的**原始**文本。
 
 ### 改合并标记的样式
 
-只需要动 `make_mark_tag()`（`pakku.lua:1060`）这一个函数，返回什么就显示什么：
+只需要动 `make_mark_tag()`（`pakku.lua:1067`）这一个函数，返回什么就显示什么：
 
 ```lua
 local function make_mark_tag(count, cfg)
@@ -609,18 +628,25 @@ local function make_mark_tag(count, cfg)
     if cfg.mark_subscript then
         return SUBSCRIPT_LPAREN .. to_subscript(count) .. SUBSCRIPT_RPAREN
     end
-    return "[x" .. count .. "]"
+    return "(" .. count .. ")"
 end
 ```
 
-位置（前/后缀）由 `make_mark()`（`pakku.lua:1071`）按 `cfg.mark` 拼装。
+位置（前/后缀）由 `make_mark()`（`pakku.lua:1078`）按 `cfg.mark` 拼装。
 渲染层不用改——`parse.lua` 拿的是 `entry.merge_mark` 明文，多长的标记都能定位。
 
 ### 调整标记的字号
 
-在 `parse.lua:760` 一带，`pakku_mark_scale` 被折算成 ASS 覆盖标签：
+默认模式（`(12)`）**没有独立字号**，直接跟随正文字体，`parse.lua` 里的
+`mark_scale` 会被强制为 1，标签只剩 `{\b1}`。
+
+只有下标模式才会折算 `\fs`。在 `parse.lua:760` 一带：
 
 ```lua
+local mark_scale = tonumber(options.pakku_mark_scale) or 1
+if mark_scale < 0.1 then mark_scale = 1 end
+if options.pakku_mark_subscript == false then mark_scale = 1 end   -- 默认走这条
+
 local tag = "{\\b1"
 if mark_scale ~= 1 then
     tag = tag .. string.format("\\fs%d", math.max(1, math.floor(event_fontsize * mark_scale + 0.5)))
@@ -628,8 +654,8 @@ end
 tag = tag .. "}"
 ```
 
-想改补偿策略（比如换成 `\fs` + `\rise` 的组合，或在非下标标记上也生效），
-改这一段即可。下标数字本身贴基线，不需要 `\rise`。
+想改补偿策略（比如换成 `\fs` + `\rise` 的组合），改这一段即可。
+下标数字本身贴基线，不需要 `\rise`。
 
 ---
 
@@ -648,12 +674,14 @@ tag = tag .. "}"
   没做进 uosc 的图形化菜单（`modules/menu.lua`）。
 - **拼音表只覆盖简体常用字**：6763 字以外的字符（生僻字、日文假名、emoji）
   按原字符参与比较，靠编辑距离/余弦兜底。
-- **标记依赖字体覆盖下标码位**：`U+2080-2089` / `U+208D-E` 属于
+- **默认标记 `(12)` 与 pakku.js 不一致**：pakku.js 只有 `₍₁₂₎` 和 `[x12]`，
+  没有括号数字。这是有意选择（见 §6），想要原样把
+  `pakku_mark_subscript=yes` 打开即可。
+- **下标模式依赖字体覆盖**：`U+2080-2089` / `U+208D-E` 属于
   Superscripts and Subscripts 区段，不在 CJK 基本区。本项目字体渲染正常，
-  但换到字形不全的字体上可能显示成方框；这种情况把
-  `pakku_mark_subscript=no` 切回 `[xN]` 即可。
-- **标记的字号是补偿值不是 pakku 原值**：pakku.js 不设标记字号，
-  本实现的 `pakku_mark_scale=1.8` 是按 Microsoft YaHei 的字形度量算出来的。
+  但换到字形不全的字体上可能显示成方框；这种情况用默认的 `(12)` 即可回避。
+- **下标模式的字号是补偿值不是 pakku 原值**：pakku.js 不设标记字号，
+  `pakku_mark_scale=1.8` 是按 Microsoft YaHei 的字形度量算出来的。
   换字体后这个比例不一定仍然精确，觉得偏大或偏小直接改数值即可。
 - **标记宽度不计入布局**：`parse.lua` 用 `clean_text`（不含标记）算文本宽度，
   所以标记会额外多出一截；标记放大后这一截会变长（滚动弹幕尾部更明显）。

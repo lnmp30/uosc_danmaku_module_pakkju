@@ -816,8 +816,10 @@ function M.build_config(o)
     cfg.cross_mode       = tobool(pick(o, "cross_mode", true), true)
     cfg.mark             = tostring(pick(o, "mark", "suffix") or "suffix"):lower()
     cfg.mark_threshold   = tonum(pick(o, "mark_threshold", 1), 1)
-    -- pakku.js: DANMU_SUBSCRIPT = true，即用下标 ₍₁₂₎ 而不是 [x12]
-    cfg.mark_subscript   = tobool(pick(o, "mark_subscript", true), true)
+    -- pakku.js: DANMU_SUBSCRIPT = true（下标 ₍₁₂₎）
+    --! 默认关掉：下标字形只有正文字体的五成多高，比例还随字体浮动，
+    --! 默认改用普通数字 "(12)"，跟随正文字体，观感稳定
+    cfg.mark_subscript   = tobool(pick(o, "mark_subscript", false), false)
     cfg.enlarge          = tobool(pick(o, "enlarge", true), true)
     cfg.enlarge_min_count = tonum(pick(o, "enlarge_min_count", 5), 5)
     cfg.enlarge_max_scale = tonum(pick(o, "enlarge_max_scale", 2.0), 2.0)
@@ -1032,6 +1034,9 @@ end
 
 -- 下标数字（U+2080 ~ U+2089）与下标括号（U+208D / U+208E）。
 -- pakku.js 的 DANMU_SUBSCRIPT=on 时用它拼出 ₍₁₂₎ 这种标记。
+--! 默认不用这套：下标字形只有正文字体的五成多高，看着偏小，
+--! 而且比例随字体在 47%~63% 之间浮动，很难调到稳定观感。
+--! 默认改成普通数字 + 半角括号 "(12)"，跟随正文字体，不需要任何补偿。
 local SUBSCRIPT_DIGITS = { "₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉" }
 local SUBSCRIPT_LPAREN = "₍"
 local SUBSCRIPT_RPAREN = "₎"
@@ -1055,8 +1060,10 @@ local function to_subscript(x)
 end
 
 -- 生成合并数量标记本身（不含位置）。
---   mark_subscript = true  -> "₍₁₂₎"   （对齐 pakku.js DANMU_SUBSCRIPT=on）
---   mark_subscript = false -> "[x12]"  （对齐 pakku.js DANMU_SUBSCRIPT=off）
+--   mark_subscript = false（默认） -> "(12)"   普通数字 + 半角括号，跟随正文字体
+--   mark_subscript = true          -> "₍₁₂₎"  下标形式，对齐 pakku.js DANMU_SUBSCRIPT=on
+--! 注意 "(12)" 是本项目的选择，不对应 pakku.js 的任何取值：
+--! pakku.js 在 DANMU_SUBSCRIPT=off 时用的是 "[x12]"。
 local function make_mark_tag(count, cfg)
     if cfg.mark == "off" or count <= cfg.mark_threshold then
         return ""
@@ -1064,7 +1071,7 @@ local function make_mark_tag(count, cfg)
     if cfg.mark_subscript then
         return SUBSCRIPT_LPAREN .. to_subscript(count) .. SUBSCRIPT_RPAREN
     end
-    return "[x" .. count .. "]"
+    return "(" .. count .. ")"
 end
 
 -- 把标记拼到文本上。默认后缀（pakku.js 默认是 prefix，本实现按使用习惯用 suffix）。
