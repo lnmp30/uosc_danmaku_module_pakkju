@@ -15,6 +15,11 @@
 /pakku.js-master/
 /lua/
 
+# ---- 第三方博客原文存档 ----
+# 版权归原作者所有，仅作本地参考，不随本仓库分发。
+# 原文地址见 readme.md 的「出处」一节。
+/在 uosc_danmaku 中集成 pakkujs 弹幕合并算法.md
+
 # ---- CC GUI 会话数据 ----
 /.ccgui/
 

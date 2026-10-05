@@ -1,6 +1,6 @@
 # 开发地图 · uosc_danmaku × pakku
 
-> 本文件面向**改代码的人**。用户使用说明见 [`read.md`](read.md)，版本历史见 [`changelog.md`](changelog.md)。
+> 本文件面向**改代码的人**。用户使用说明见 [`readme.md`](readme.md)，版本历史见 [`changelog.md`](changelog.md)。
 
 ---
 
@@ -26,9 +26,16 @@ uosc_danmaku 自带的合并（`merge_tolerance`）只能做**文本完全相同
 
 | 文档 | 读者 | 内容 |
 |---|---|---|
-| `read.md` | 普通用户 | 怎么开、选项怎么调、出问题怎么查 |
+| `readme.md` | 普通用户 | 怎么开、选项怎么调、出问题怎么查 |
 | `project.md` | 开发者 | 代码在哪、数据怎么流、怎么扩展、有哪些坑 |
 | `changelog.md` | 所有人 | 每个版本改了什么、为什么改 |
+| `THIRD-PARTY.md` | 分发者 | 各组件来源与许可证，以及为什么本项目是 GPL-3.0 |
+| `LICENSE` | 所有人 | GPL-3.0 全文 |
+
+> **许可证速查**：本项目整体 **GPL-3.0**。因为 `modules/pakku.lua` 是
+> [pakku.js](https://github.com/xmcp/pakku.js)（GPLv3）的衍生作品；
+> 宿主 uosc_danmaku 是 MIT，MIT 与 GPLv3 兼容。
+> 详见 [`THIRD-PARTY.md`](THIRD-PARTY.md) 与 §15。
 
 ---
 
@@ -45,15 +52,21 @@ mpv_pakkujs/
 │   │   └── uosc_danmaku/        ★ 本次工作的主战场
 │   └── script-opts/
 │       └── uosc_danmaku.conf    ★ 新增 pakku 选项段
-├── pakku.js-master/             算法参考实现（TypeScript + C++/WASM）
+├── pakku.js-master/             算法参考实现（TypeScript + C++/WASM）※ 未入库
 │   └── pakkujs/similarity/repo-cpp/src/
 │       ├── main.cpp             相似判定与聚类的权威实现
 │       └── pinyin_dict.txt      汉字 → {声母,韵母} 原始数据（6763 条）
-├── [DMG&VCB-Studio] BOCCHI THE ROCK! [04]....xml
-│                                6702 条真实弹幕，用来做回归/压测
+├── testdata/                    回归测试用的弹幕文件（3 集，共 20086 条）
+│   └── [DMG&VCB-Studio] BOCCHI THE ROCK! [NN][Ma10p_1080p][x265_flac].xml
+├── LICENSE                      GPL-3.0 全文
+├── THIRD-PARTY.md               第三方组件与许可证说明
+├── readme.md / project.md / changelog.md
 └── 在 uosc_danmaku 中集成 pakkujs 弹幕合并算法.md
-                                 需求来源与算法说明
+                                 第三方博客存档，仅本地参考 ※ 未入库
 ```
+
+> 标「※ 未入库」的都在 `.gitignore` 里：`pakku.js-master/` 是第三方检出，
+> 博客存档是他人版权内容，都不随本仓库分发。
 
 `★` 标记的是本次新增或修改的部分：
 
@@ -662,7 +675,7 @@ tag = tag .. "}"
 ## 13. 已知限制
 
 - **性能**：O(窗口内簇数 × 每簇一次判定)。默认 `threshold=30` 时 6700 条约 320ms；
-  改成 `threshold=10` 约 181ms，`threshold=5` 约 141ms（3 集平均，见 `read.md` §12）。
+  改成 `threshold=10` 约 181ms，`threshold=5` 约 141ms（3 集平均，见 `readme.md` 的「性能」一节）。
   窗口开得越大越慢，是线性以上增长。
 - **`cross_mode` 默认开启**（对齐 pakku.js）：滚动/顶部/底部会互相合并，
   靠 `MODE_ELEVATION` 把类型提升为「底部 > 顶部 > 滚动」。
@@ -694,3 +707,56 @@ tag = tag .. "}"
 - [ ] 给 `M.merge()` 加增量/分块处理，避免超长视频（>3 万条）一次性聚类
 - [ ] 把 `pakku_threshold` 从「固定秒数」改成按弹幕密度自适应
 - [ ] 补一份自动化测试脚本（当前自检清单是手动的）
+
+---
+
+## 15. 许可与合规
+
+### 结论：本项目整体 GPL-3.0
+
+| 组件 | 许可证 | 是否随仓库分发 |
+|---|---|---|
+| `modules/pakku.lua`（本项目） | **GPL-3.0** | 是 |
+| uosc_danmaku（宿主，vendored） | MIT，© 2024 吴南李 | 是 |
+| pakku.js（算法与拼音字典来源） | GPLv3 | 否（仅衍生） |
+| uosc（运行时依赖） | LGPL-2.1 | 否 |
+| `testdata/*.xml` | 各弹幕作者 | 是 |
+
+判定依据：`pakku.lua` 复用了 pakku.js 的四级判定逻辑、聚类/标记/密度调控算法、
+文本预处理规则、**6763 字的拼音字典数据**以及各项默认配置值，构成衍生作品。
+GPLv3 是强 copyleft，衍生作品必须以 GPLv3 分发。
+
+MIT（uosc_danmaku）与 GPLv3 兼容，可并入 GPLv3 作品一起分发；
+未改动的上游文件仍可按 MIT 使用，其许可证全文保留在
+`portable_config/scripts/uosc_danmaku/LICENSE`。
+
+完整说明见 [`THIRD-PARTY.md`](THIRD-PARTY.md)。
+
+### 分发时的义务
+
+1. 保留 `LICENSE` 与 `portable_config/scripts/uosc_danmaku/LICENSE`
+2. 保留 `THIRD-PARTY.md`（或等效的第三方声明）
+3. 修改 GPL 部分后需一并提供修改后的源码
+
+### 隐私自查（每次入库前建议重跑）
+
+| 检查项 | 结果 |
+|---|---|
+| 弹幕 `p` 属性字段 | 只有 `时间,类型,字号,颜色` 四个，**无**用户 ID / 用户哈希 / 发送时间戳 |
+| 弹幕正文里的手机号 / QQ / 邮箱 / 网址 / 群号 | 扫描后无真实命中（唯一疑似项是一条经纬度坐标，属原视频公开弹幕内容） |
+| 跟踪文件里的本机绝对路径 | 无（文档里一律用 `$PWD` / 相对路径） |
+| 跟踪文件里的用户名 / 邮箱 | 无 |
+| `portable_config/files/`（观看历史、弹幕历史） | 已在 `.gitignore` 中排除，未入库 |
+| `portable_config/cache`、`fonts`、`shaders`、`icc` | 已排除 |
+| 调试残留（`_e2e*`、`_frames`、`_*.lua`） | 已排除，仓库中无残留 |
+| 第三方博客原文存档 | 已移出仓库（`.gitignore`），仅本地保留 |
+
+**仍存在于 git 历史中的两处，需要你决定是否处理：**
+
+1. **提交者邮箱**：`git log --format='%an <%ae>'` 里的邮箱是提交时配置的 QQ 邮箱
+   （`lnmp30 <…@qq.com>`）已随提交公开在 GitHub 上。想换成 GitHub 的 noreply 邮箱需要重写历史
+   （`git filter-repo --email-callback` 或 BFG）后 `git push --force`。
+2. **第三方博客原文**：虽然已从最新提交移除，但它仍留在历史提交里。
+   若要彻底清除同样需要重写历史。
+
+两者都只影响历史，不影响当前工作树。
