@@ -428,8 +428,9 @@ end
 function fetch_danmaku_data(args, callback)
     call_cmd_async(args, function(error, json)
         if error then
-            show_message("获取数据失败", 3)
-            msg.error("HTTP 请求失败：" .. error)
+            -- 安卓上不方便看日志，把原因直接摆到 OSD 上
+            show_message("弹幕获取失败：" .. http_error_hint(error), 6)
+            msg.error("HTTP 请求失败：" .. tostring(error))
             return
         end
         local data = utils.parse_json(json)
@@ -496,8 +497,11 @@ function handle_fetched_danmaku(data, url, from_menu)
             if DANMAKU.sources[url] == nil then
                 DANMAKU.sources[url] = {from = "api_server"}
             end
-            show_message("该集弹幕内容为空，结束加载", 3)
-            msg.info("该集弹幕内容为空，结束加载")
+            -- 带上服务器和剧集，方便判断是「这集真没弹幕」还是「选错了/服务器不对」
+            local host = tostring(url):match("^https?://([^/]+)") or tostring(url)
+            local episode = tostring(url):match("/comment/(%d+)") or "?"
+            show_message(string.format("该集弹幕内容为空（%s / 剧集 %s）", host, episode), 6)
+            msg.info("该集弹幕内容为空，结束加载：" .. tostring(url))
             if not from_menu then
                 mp.commandv("script-message", "auto_load_fallback")
             end

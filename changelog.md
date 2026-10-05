@@ -26,6 +26,60 @@
 
 ---
 
+## [0.8.1] - 2026-10-05
+
+把网络失败的真实原因显示到 OSD 上。安卓上没有方便的日志入口，
+原来只弹一句「获取数据失败」，原因（curl 退出码）只在 `msg.error` 里，
+用户根本看不到，无从排查。
+
+### 修改
+
+- **`modules/utils.lua`**：新增 `brief_error()` 和 `http_error_hint()`。
+  后者会把 subprocess 的错误串压成一行短文本，并翻译常见 curl 退出码：
+
+  | 退出码 | 提示 |
+  |---|---|
+  | `-3` | 子进程没起来（可能缺 curl） |
+  | `6` | 域名解析失败 |
+  | `7` | 连不上服务器 |
+  | `22` | HTTP 返回错误状态码 |
+  | `28` | 请求超时 |
+  | `35` / `60` | TLS 握手失败 / 证书不受信任 |
+  | `51` / `52` / `56` | 证书校验失败 / 服务器无响应 / 接收数据失败 |
+
+  文本刻意压得很短（详情截断到 18 个字符）：OSD 字号大，太长会被挤出屏幕，
+  而关键信息（退出码 + 人话）在最前面。
+
+- **`apis/dandanplay.lua`**：`fetch_danmaku_data` 失败时
+  `获取数据失败` → `弹幕获取失败：<原因>`；
+  `handle_fetched_danmaku` 的空弹幕提示补上服务器和剧集号：
+  `该集弹幕内容为空（danmaku-api.152468.xyz / 剧集 12345）`。
+
+- **`modules/menu.lua`**：`get_episodes` 的失败提示同样带上原因
+  （`剧集数据获取失败：<原因>`）。
+
+- `readme.md`：排查问题一节新增「弹幕获取失败 / 该集弹幕内容为空」的对照表。
+
+### 验证
+
+- 纯函数单测：8 组错误串（含 `-3` / `6` / `7` / `22` / `28` / `60` / 空串 / nil）
+  都产出了预期文本，中文截断按 UTF-8 边界不切碎字符。
+- mpv 端到端：直接发 `load-danmaku` 触发 `fetch_danmaku` 的失败分支，
+  日志确认走到了新提示，且**没有** `attempt to call a nil value`
+  （证明 `http_error_hint` 这个全局在 menu.lua / dandanplay.lua 里可见）：
+  ```
+  [v][uosc_danmaku] 尝试获取弹幕：http://127.0.0.1:65500/api/v2/comment/12345?withRelated=true&chConvert=0
+  [e][uosc_danmaku] HTTP 请求失败：Calling failed. Exit code: -3 Error:
+  ```
+- 6 个 Lua 文件语法检查通过。
+
+### 备注
+
+- 只改了提示文案与错误处理，**没有改动任何请求逻辑**。
+- `brief_error` 用 `utf8_sub` 截断，避免把汉字切成半个。
+
+---
+
 ## [0.8.0] - 2026-10-05
 
 新增 `danmaku_auto_select`：搜索结果不再弹列表，程序按规则自动挑一条。

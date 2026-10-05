@@ -58,6 +58,68 @@ function abbr_str(str, length)
     return str
 end
 
+-- 把错误文本压成一行，方便直接放在 OSD 上显示。
+-- 安卓上没有方便的日志入口，失败原因只能靠 OSD，所以这里保留关键部分：
+-- 压掉换行、去掉首尾空白、按 UTF-8 边界截断。
+function brief_error(err, max_len)
+    local s = tostring(err or ''):gsub('%s+', ' ')
+    s = s:gsub('^%s*(.-)%s*$', '%1')
+    if s == '' then return '无详细信息' end
+    max_len = max_len or 80
+    if #s > max_len then
+        s = utf8_sub(s, 1, max_len) .. '…'
+    end
+    return s
+end
+
+-- curl 常见退出码的简短说明。请求失败时 subprocess 只会给一个数字，
+-- 这里翻成人话，方便直接看 OSD 定位（安卓上不方便看日志）。
+local CURL_EXIT_HINTS = {
+    [1]  = 'curl 用法错误',
+    [3]  = 'URL 格式错误',
+    [5]  = '代理解析失败',
+    [6]  = '域名解析失败',
+    [7]  = '连不上服务器',
+    [22] = 'HTTP 返回错误状态码',
+    [28] = '请求超时',
+    [35] = 'TLS 握手失败',
+    [51] = '证书校验失败',
+    [52] = '服务器无响应',
+    [56] = '接收数据失败',
+    [60] = '证书不受信任',
+    -- 这个 -3 是实测出来的：mpv 日志同时打出
+    -- "Subprocess failed: init"，说明进程根本没起来
+    [-3] = '子进程没起来（可能缺 curl）',
+}
+
+-- 把 subprocess 的失败信息压成适合 OSD 的一行短文本。
+-- 长度刻意压得很短：OSD 字号很大，太长会糊满半个屏幕。
+function http_error_hint(err)
+    local s = tostring(err or '')
+    local code = tonumber(s:match('Exit code:%s*(-?%d+)'))
+    local hint = code and CURL_EXIT_HINTS[code]
+
+    -- "Calling failed. Exit code: 7 Error: xxx" 里 Error: 之后才是真正原因
+    local detail = s:match('Error:%s*(.-)%s*$') or ''
+    detail = detail:gsub('%s+', ' ')
+    if detail == '' then detail = nil end
+
+    local head
+    if code then
+        head = 'exit ' .. code
+        if hint then head = head .. ' ' .. hint end
+    end
+
+    if detail then
+        -- 只留一小截：OSD 字号很大，太长会被挤出屏幕，关键信息在前面
+        detail = utf8_sub(detail, 1, 18)
+        if head then return head .. '：' .. detail end
+        return detail
+    end
+
+    return head or '无详细信息'
+end
+
 function get_str_width(text, font_size)
     local width = 0
     for i = 1, #text do

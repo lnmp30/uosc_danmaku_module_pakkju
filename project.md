@@ -919,3 +919,55 @@ TESTPICK-EPISODE => 第4话  (集数精确匹配第 4 集)     ← S01E04 正确
 
 顺带确认了两个判断函数：7 条搜索候选 `episode-list? false`，
 12 集剧集列表 `episode-list? true`。
+
+---
+
+## 18. 网络失败的可诊断性
+
+### 问题
+
+安卓上没有方便的日志入口，而原来的失败提示只有一句「获取数据失败」，
+真正的原因（`Calling failed. Exit code: N Error: xxx`）只写进 `msg.error`，
+用户看不到，等于没法排查。
+
+两个失败提示的出处：
+
+| 提示 | 位置 | 含义 |
+|---|---|---|
+| `获取数据失败` | `apis/dandanplay.lua:431`（`fetch_danmaku_data`） | 请求 `api_server/api/v2/comment/<id>` 的 subprocess 失败 |
+| `获取数据失败` | `modules/menu.lua:453`（`get_episodes`） | 请求 `api_server/api/v2/bangumi/<id>` 失败 |
+| `该集弹幕内容为空，结束加载` | `apis/dandanplay.lua:499`（`handle_fetched_danmaku`） | 请求成功但 `count == 0` |
+
+### 做法
+
+`modules/utils.lua` 新增两个全局函数：
+
+- `brief_error(err, max_len)`：压掉换行、去首尾空白、按 UTF-8 边界截断
+- `http_error_hint(err)`：识别 `Exit code: N`，翻成人话后拼成一行短文本
+
+翻译表（`CURL_EXIT_HINTS`）里的 `-3` 是**实测出来的**：mpv 日志同时打出
+`Subprocess failed: init`，说明进程根本没起来 —— 沙箱里就是这样，安卓上缺
+`curl` 可执行文件时也是这个特征。
+
+文本长度刻意压到 20 个汉字上下：OSD 用 `options.fontsize`（默认 50），
+太长会被挤出屏幕，而退出码 + 人话在最前面，够用。
+
+调用点：
+
+- `dandanplay.lua` `fetch_danmaku_data` 失败分支
+- `dandanplay.lua` `handle_fetched_danmaku` 的 `count == 0` 分支，补上
+  服务器与剧集号，用来区分「这集真没弹幕」和「选错了条目」
+- `menu.lua` `get_episodes` 的 `err` 分支
+
+### 验证
+
+先单测纯函数（用桩模块 `dofile` 加载 `utils.lua`，8 组输入），
+再用 mpv 直接发 `load-danmaku` 打中 `fetch_danmaku` 的失败分支：
+
+```
+[v][uosc_danmaku] 尝试获取弹幕：http://127.0.0.1:65500/api/v2/comment/12345?withRelated=true&chConvert=0
+[e][uosc_danmaku] HTTP 请求失败：Calling failed. Exit code: -3 Error:
+```
+
+日志里没有 `attempt to call a nil value`，证明 `http_error_hint` 这个全局
+在 `menu.lua` / `dandanplay.lua` 里可见（`utils.lua` 在 `main.lua` 里先加载）。

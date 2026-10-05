@@ -450,7 +450,8 @@ function get_episodes(animeTitle, bangumiId, api_server)
         })
 
         if err then
-            local message = "获取数据失败"
+            -- 安卓上不方便看日志，把失败原因直接摆到 OSD 上
+            local message = "剧集数据获取失败：" .. http_error_hint(err)
             if uosc_available then
                 table.insert(items, {
                     title = message,
