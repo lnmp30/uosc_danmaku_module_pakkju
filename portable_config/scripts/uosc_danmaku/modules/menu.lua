@@ -30,6 +30,23 @@ local AUTO_SELECT_TYPE_RULES = {
     { pattern = "电视剧", score = -20 },
 }
 
+-- 特番 / 花絮 / 预告这一类条目：名字又长又啰嗦，而且往往根本没有弹幕。
+-- 实测「S11 BOCCHI THE ROCK! Presents COUNTDOWN BOCCHI!」凭标题相似度压过了
+-- 正片，结果就是「该集弹幕内容为空」。这里按关键词扣分压下去。
+local AUTO_SELECT_NOISE_RULES = {
+    { pattern = "countdown", score = -40 },
+    { pattern = "特番",      score = -40 },
+    { pattern = "特别篇",    score = -30 },
+    { pattern = "特别节目",  score = -30 },
+    { pattern = "总集篇",    score = -30 },
+    { pattern = "预告",      score = -30 },
+    { pattern = "花絮",      score = -30 },
+    { pattern = "生放送",    score = -30 },
+    { pattern = "演唱会",    score = -25 },
+    { pattern = "舞台",      score = -20 },
+    { pattern = "声优",      score = -20 },
+}
+
 -- 打分前把标题规范化：转小写、去掉空白与 ASCII 标点
 local function normalize_for_score(s)
     if type(s) ~= "string" then return "" end
@@ -51,6 +68,20 @@ local function score_anime_item(ref, item)
     for _, rule in ipairs(AUTO_SELECT_TYPE_RULES) do
         if hay:find(rule.pattern, 1, true) then score = score + rule.score end
     end
+
+    -- 噪音关键词按标题匹配（小写后比对）
+    local lower_title = title:lower()
+    for _, rule in ipairs(AUTO_SELECT_NOISE_RULES) do
+        if lower_title:find(rule.pattern, 1, true) then score = score + rule.score end
+    end
+
+    -- 标题比搜索词长出来的部分按字数扣分：正片标题通常和搜索词差不多长，
+    -- 特番/花絮的名字则会长出一大截。上限 40 字，避免长标题被一棍子打死。
+    local extra = utf8_len(norm_title) - utf8_len(norm_ref)
+    if extra > 0 then
+        score = score - math.min(extra, 40) * 0.8
+    end
+
     return score
 end
 
@@ -122,6 +153,44 @@ local function run_menu_item(item, why)
             mp.command(item.value)
         end
     end)
+end
+
+--[[ 自动选择去重
+
+    实测（安卓 mpvex 日志）：连按自定义按钮会发起两次搜索，两次都选出同一部
+    番剧，于是各自排了一次后续命令。而 search-episodes-event 一进来就调
+    perform_cancel_active_request()，第二次把第一次正在跑的请求掐掉了 ——
+    表现是 curl 被中止（Calling failed. Exit code: -2，stderr 里只有一行
+    0 字节的进度表），然后什么都没加载。
+
+    所以同一个「搜索词 + 选中项」在短时间内只处理一次。
+]]
+local AUTO_SELECT_DEDUP_SEC = 5
+-- key -> 上次触发时间。用表而不是「只记最后一个」，
+-- 否则 A→B→A 这种来回点会绕过去重。（表每次检查时顺便剪枝，不会长起来）
+local recent_auto_picks = {}
+
+-- key 用「阶段 + 上下文 + 选中项」拼出来，三个自动选择入口共用这一个窗口。
+local function auto_select_is_duplicate(key)
+    key = tostring(key)
+    local now = mp.get_time()
+
+    for k, t in pairs(recent_auto_picks) do
+        if (now - t) >= AUTO_SELECT_DEDUP_SEC then recent_auto_picks[k] = nil end
+    end
+
+    if recent_auto_picks[key] then return true end
+    recent_auto_picks[key] = now
+    return false
+end
+
+-- 三个入口共用的去重闸门：重复触发时打日志并返回 true，调用方直接 return。
+local function auto_select_should_skip(stage, context, item)
+    local key = stage .. "\0" .. tostring(context) .. "\0" .. tostring(item.title)
+    if not auto_select_is_duplicate(key) then return false end
+    msg.info(string.format("自动选择：忽略重复触发（%s / %s）", stage, tostring(item.title)))
+    trace_osd("⑤ 忽略重复的自动选择：%s", tostring(item.title))
+    return true
 end
 
 -- 如果 latest_menu_anime 中存在首项为加载占位，移除它（兼容完整 menu props 或 items 数组）
@@ -201,6 +270,7 @@ local function make_handle_response(ctx)
             if options.danmaku_auto_select then
                 local best, why = pick_auto_item(final_items)
                 if best then
+                    if auto_select_should_skip("搜索", ctx.query, best) then return end
                     run_menu_item(best, why or "自动选择")
                     return
                 end
@@ -540,6 +610,7 @@ function get_episodes(animeTitle, bangumiId, api_server)
         if options.danmaku_auto_select then
             local item, why = pick_auto_item(items)
             if item then
+                if auto_select_should_skip("剧集", mp.get_property("filename"), item) then return end
                 run_menu_item(item, why or "自动选择")
                 return
             end
@@ -610,6 +681,7 @@ function open_menu_select(menu_items, is_time)
     if options.danmaku_auto_select and not is_time then
         local item, why = pick_auto_item(menu_items)
         if item then
+            if auto_select_should_skip("列表", mp.get_property("filename"), item) then return end
             run_menu_item(item, why or "自动选择")
             return
         end
