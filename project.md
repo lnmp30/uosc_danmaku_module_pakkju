@@ -841,3 +841,81 @@ script-message 方案。
 ```
 
 三次运行日志里都没有 `[error]` 或 `stack traceback`。
+
+---
+
+## 17. 自动选择（`danmaku_auto_select`）
+
+### 问题
+
+上面那个 `danmaku-quick-search` 只解决了「输入关键词」，没解决「从结果里选」。
+而结果列表有两种实现，**在安卓上都会卡住**：
+
+| 列表实现 | 触发条件 | 选中方式 |
+|---|---|---|
+| uosc 菜单 | `uosc_available == true` | `cursor:zone('primary_down', ...)`，要鼠标事件 |
+| `mp.input`（`input.select`） | 没有 uosc 时的降级路径 | **纯键盘**：上下键 + 回车 |
+
+判据：`open_menu_select()` 用的 `prompt = '选择:'`（`menu.lua:574` 一带），
+而 uosc 路径的菜单标题是「在此处输入番剧名称」。截图里出现 `选择:`，
+说明那台设备上 **uosc 没在跑**，全走了 `mp.input` 降级路径。
+
+### 做法
+
+新增选项 `danmaku_auto_select`（默认 **no**）。开启后，列表不再弹出，
+改为按规则自动挑一条。
+
+挑选逻辑集中在 `pick_auto_item()`（`menu.lua:73`），先用
+`looks_like_episode_list()`（`menu.lua:59`）判断这是剧集列表还是搜索列表：
+
+| 列表类型 | 判据 | 挑选规则 |
+|---|---|---|
+| 剧集列表 | 过半可选项的 `hint` 是纯数字 | 文件名推断出的集数精确匹配，匹配不上取第一集 |
+| 搜索列表 | 否则 | `score_anime_item()`（`menu.lua:40`）打分取最高 |
+
+打分只有两条规则，刻意做得简单可预期：
+
+```lua
+score = jaro_winkler(规范化(parse_title()), 规范化(标题)) * 100
+      + (标题完全一致 ? 30 : 0)
+      + 类型关键词加减分   -- 动漫/番剧 +40，电影/剧场版 -35，真人 -30，电视剧 -20
+```
+
+### 挂了三个地方
+
+`pick_auto_item()` 是同一个实现，被三处调用：
+
+| 位置 | 覆盖的路径 |
+|---|---|
+| `open_menu_select()` 开头 | **所有**「没有 uosc 时」的列表入口，包括 `apis/extra.lua` 的搜索结果 |
+| `get_animes()` 的 `do_final_update` | dandanplay 搜索（有 uosc 时也生效） |
+| `get_episodes()` 末尾 | 剧集列表（有 uosc 时也生效） |
+
+放在 `open_menu_select()` 里是关键：`apis/extra.lua:343` 和 `:423` 都走它，
+而用户截图里的列表格式（`cat_name | year | 来源：xxx`，见 `extra.lua:403`）
+正是 `extra.lua` 那条路径 —— 只 hook `get_animes` 是覆盖不到的。
+
+`is_time = true` 时（弹幕延迟/筛选菜单）不做自动选择。
+
+### 验证
+
+沙箱里 **mpv 的 `subprocess` + `capture_stdout` 被拦**（`Subprocess failed: init`，
+status `-3`，命名管道限制），所以没法跑真实的 HTTP 搜索。改成在隔离副本里
+直接调用真实函数，喂用户截图里的 7 条实际候选：
+
+```
+TEST ref(parse_title)=qs 孤独摇滚
+TESTSCORE   51.43  孤独摇滚（上）           [电影 | 2025 | 来源：爱奇艺]
+TESTSCORE   51.43  孤独摇滚（上）           [电影 | 2025 | 来源：优酷]
+TESTSCORE   46.67  孤独摇滚(上)普通话版     [电影 | 2025 | 来源：芒果TV]
+TESTSCORE   42.50  孤独摇滚（上）（普通话）  [电影 | 2025 | 来源：爱奇艺]
+TESTSCORE  135.00  孤独摇滚！               [动漫 | 2022 | 来源：b 站]   ← 胜出
+TESTSCORE   67.50  孤独摇滚!                [电影 | 2025 | 来源：b 站]
+TESTSCORE   60.00  孤独摇滚(上)            [电影 | 2025 | 来源：芒果TV]
+
+TESTPICK-ANIME   => 孤独摇滚！  (评分 135.0)         ← 正确，避开了电影版
+TESTPICK-EPISODE => 第4话  (集数精确匹配第 4 集)     ← S01E04 正确命中
+```
+
+顺带确认了两个判断函数：7 条搜索候选 `episode-list? false`，
+12 集剧集列表 `episode-list? true`。

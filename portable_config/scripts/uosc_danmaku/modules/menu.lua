@@ -9,6 +9,120 @@ local active_request_cancel = nil
 local active_request_type = nil
 local request_cancelled = false
 
+--[[ ==================== 自动选择（给没有键盘的环境用） ====================
+    安卓 mpv、遥控器、手柄都没法在列表里上下选 + 回车确认，而
+    mpv 自带的 mp.input 列表是纯键盘的、uosc 菜单则依赖鼠标事件。
+    开启 danmaku_auto_select 后，搜索结果不再弹菜单，
+    而是按打分自动挑一条，再按文件名推断的集数自动选集。
+
+    打分只用了「标题相似度 + 类型关键词」两条规则，刻意做得简单可预期：
+    优先标题像的，动漫/番剧加权，电影/剧场版/真人减权。
+    如果挑错了，把 danmaku_auto_select 关掉就能回到手动选。
+]]
+
+-- 类型关键词的加减分。命中即累加，所以「电影 剧场版」会被扣两次，符合预期。
+local AUTO_SELECT_TYPE_RULES = {
+    { pattern = "动漫",   score =  40 },
+    { pattern = "番剧",   score =  40 },
+    { pattern = "电影",   score = -35 },
+    { pattern = "剧场版", score = -35 },
+    { pattern = "真人",   score = -30 },
+    { pattern = "电视剧", score = -20 },
+}
+
+-- 打分前把标题规范化：转小写、去掉空白与 ASCII 标点
+local function normalize_for_score(s)
+    if type(s) ~= "string" then return "" end
+    return (s:lower():gsub("[%s%p]+", ""))
+end
+
+-- 给一条番剧搜索结果打分。ref 是当初用来搜索的关键词。
+local function score_anime_item(ref, item)
+    local title = item.title or ""
+    local norm_ref = normalize_for_score(ref)
+    local norm_title = normalize_for_score(title)
+
+    local score = jaro_winkler(norm_ref, norm_title) * 100
+    if norm_ref ~= "" and norm_ref == norm_title then
+        score = score + 30
+    end
+
+    local hay = title .. " " .. (item.hint or "")
+    for _, rule in ipairs(AUTO_SELECT_TYPE_RULES) do
+        if hay:find(rule.pattern, 1, true) then score = score + rule.score end
+    end
+    return score
+end
+
+-- 判断一份列表是不是「剧集列表」：可选项里过半的 hint 是纯数字就是。
+-- 番剧搜索结果的 hint 长这样：动漫 | 2022 | 来源：b 站 —— tonumber 得到 nil。
+local function looks_like_episode_list(items)
+    local total, numeric = 0, 0
+    for _, it in ipairs(items) do
+        if type(it.value) == "table" and it.selectable ~= false then
+            total = total + 1
+            if tonumber(it.hint) then numeric = numeric + 1 end
+        end
+    end
+    return total > 0 and numeric * 2 > total
+end
+
+-- 自动挑一条可选项。返回 item, 理由。
+--   剧集列表：按文件名推断出的集数做精确匹配，匹配不上取第一集
+--   搜索列表：按「标题相似度 + 类型关键词」打分取最高
+local function pick_auto_item(items)
+    local filename = mp.get_property("filename/no-ext")
+    local number = filename and get_episode_number(filename) or nil
+
+    if looks_like_episode_list(items) then
+        local first
+        for _, it in ipairs(items) do
+            if type(it.value) == "table" and it.selectable ~= false then
+                if not first then first = it end
+                if number and tonumber(it.hint) == number then
+                    return it, string.format("集数精确匹配第 %d 集", number)
+                end
+            end
+        end
+        if first then
+            return first, number and "没有匹配的集数，取第一集" or "文件名里没有集数，取第一集"
+        end
+        return nil, nil
+    end
+
+    local ref = parse_title()
+    local best, best_score = nil, nil
+    for _, it in ipairs(items) do
+        if type(it.value) == "table" and it.selectable ~= false then
+            local s = score_anime_item(ref, it)
+            if not best_score or s > best_score then
+                best, best_score = it, s
+            end
+        end
+    end
+    return best, best_score and string.format("评分 %.1f", best_score) or nil
+end
+
+-- 关掉可能还开着的 mpv 原生输入 UI，并触发一条菜单项的 value（命令数组）
+local function run_menu_item(item, why)
+    msg.info(string.format("自动选择：%s（%s）", tostring(item.title), tostring(why)))
+    show_message("自动匹配：" .. tostring(item.title), 3)
+
+    if input_loaded then input.terminate() end
+    if uosc_available then
+        mp.commandv("script-message-to", "uosc", "close-menu", "menu_anime")
+    end
+
+    -- 让正在关闭的输入 UI 先退场，再执行命令
+    mp.add_timeout(0.1, function()
+        if type(item.value) == "table" then
+            mp.commandv(unpack(item.value))
+        elseif type(item.value) == "string" and item.value ~= "" then
+            mp.command(item.value)
+        end
+    end)
+end
+
 -- 如果 latest_menu_anime 中存在首项为加载占位，移除它（兼容完整 menu props 或 items 数组）
 local function strip_loading_from_latest_menu_anime()
     if not latest_menu_anime or #latest_menu_anime == 0 then return end
@@ -72,6 +186,18 @@ local function make_handle_response(ctx)
                 end
             end
             if request_cancelled then return end
+
+            -- 自动选择模式：不弹菜单，直接挑一条最像的
+            if options.danmaku_auto_select then
+                local best, why = pick_auto_item(final_items)
+                if best then
+                    run_menu_item(best, why or "自动选择")
+                    return
+                end
+                msg.warn("danmaku_auto_select 已开启，但没有可用的番剧结果，回退到菜单")
+                show_message("没搜到可用结果，已回退到手动选择", 3)
+            end
+
             if uosc_available then
                 latest_menu_anime = update_menu_uosc(ctx.menu_type, ctx.menu_title, final_items, ctx.footnote, ctx.menu_cmd, ctx.query)
             else
@@ -389,6 +515,16 @@ function get_episodes(animeTitle, bangumiId, api_server)
             end
         end
 
+        -- 自动选择模式：按文件名推断的集数自动选集，不弹菜单
+        if options.danmaku_auto_select then
+            local item, why = pick_auto_item(items)
+            if item then
+                run_menu_item(item, why or "自动选择")
+                return
+            end
+            msg.warn("danmaku_auto_select 已开启，但剧集列表里没有可选项")
+        end
+
         if uosc_available then
             footnote = mp.get_property("filename")
             update_menu_uosc(menu_type, menu_title, items, footnote)
@@ -447,6 +583,18 @@ function update_menu_uosc(menu_type, menu_title, menu_item, menu_footnote, menu_
 end
 
 function open_menu_select(menu_items, is_time)
+    -- 自动选择模式：这个函数是所有「没有 uosc 时」的列表入口
+    -- （包括 apis/extra.lua 的搜索结果），在这里拦一刀能一次覆盖全部路径。
+    -- is_time 是弹幕延迟/筛选菜单，不做自动选择。
+    if options.danmaku_auto_select and not is_time then
+        local item, why = pick_auto_item(menu_items)
+        if item then
+            run_menu_item(item, why or "自动选择")
+            return
+        end
+        msg.warn("danmaku_auto_select 已开启，但列表里没有可选项，回退到手动选择")
+    end
+
     local item_titles, item_values = {}, {}
     for i, v in ipairs(menu_items) do
         item_titles[i] = is_time and "[" .. v.hint .. "] " .. v.title or
