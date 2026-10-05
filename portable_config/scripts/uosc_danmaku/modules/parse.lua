@@ -757,27 +757,20 @@ function convert_danmaku_to_ass_events(force)
         pre_events = limit_danmaku(pre_events, options.max_screen_danmaku)
     end
 
+    -- 合并标记的字号补偿倍数。
+    -- 下标字形天生偏小（实测 Microsoft YaHei 下 ₀-₉ 只有正文数字的 55% 高），
+    -- 所以给标记单独套一个 \fs。只对下标标记生效，[xN] 这种普通字符不补偿。
+    local mark_scale = tonumber(options.pakku_mark_scale) or 1
+    if mark_scale < 0.1 then mark_scale = 1 end
+    if options.pakku_mark_subscript == false then mark_scale = 1 end
+
     local ass_events = {}
     for _, ev in ipairs(pre_events) do
         local d = ev.danmaku
         local appear_time = ev.start_time
         local danmaku_type = d.type
         local clean_text = ch_convert_cached(decode_html_entities(d.text))
-        -- 合并标记加粗：只加 \b1（粗体），不加 \i1（斜体）。
-        -- 标记本体由 pakku.lua 通过 merge_mark 给出（₍₁₂₎ / [x12]），
-        -- 这里用明文比对定位，避免正则去猜标记的形状
-        local text = ass_escape(clean_text)
-        local mark = d.merge_mark
-        if mark and mark ~= "" and #text >= #mark then
-            if text:sub(-#mark) == mark then
-                text = text:sub(1, #text - #mark) .. "{\\b1}" .. mark
-            elseif text:sub(1, #mark) == mark then
-                text = "{\\b1}" .. mark .. text:sub(#mark + 1)
-            end
-        elseif (d.merge_count or 1) > 1 then
-            -- 内置合并（merge_duplicate_danmaku）走这里：标记是纯后缀 xN
-            text = text:gsub("x(%d+)$", "{\\b1}x%1")
-        end
+
         local event_fontsize
         if d.merge_scale then
             -- pakku 路径：字号 = 基础字号 × 合并放大系数（密度超限时该系数会小于 1）
@@ -786,6 +779,30 @@ function convert_danmaku_to_ass_events(force)
             event_fontsize = DanmakuArray.get_merged_font_size(
                 fontsize, d.merge_count or 1, fontsize_growth, fontsize_max
             )
+        end
+
+        -- 合并标记的样式：只加 \b1（粗体），不加 \i1（斜体）。
+        -- 标记本体由 pakku.lua 通过 merge_mark 给出（₍₁₂₎ / [x12]），
+        -- 这里用明文比对定位，避免正则去猜标记的形状。
+        --! 下标字形（U+2080-2089）本身只有正常数字的六成左右高，
+        --! 所以用 \fs 单独给标记放大，倍数由 pakku_mark_scale 控制
+        local text = ass_escape(clean_text)
+        local mark = d.merge_mark
+        if mark and mark ~= "" and #text >= #mark then
+            local tag = "{\\b1"
+            if mark_scale ~= 1 then
+                tag = tag .. string.format("\\fs%d", math.max(1, math.floor(event_fontsize * mark_scale + 0.5)))
+            end
+            tag = tag .. "}"
+
+            if text:sub(-#mark) == mark then
+                text = text:sub(1, #text - #mark) .. tag .. mark
+            elseif text:sub(1, #mark) == mark then
+                text = tag .. mark .. text:sub(#mark + 1)
+            end
+        elseif (d.merge_count or 1) > 1 then
+            -- 内置合并（merge_duplicate_danmaku）走这里：标记是纯后缀 xN
+            text = text:gsub("x(%d+)$", "{\\b1}x%1")
         end
 
         -- 颜色从十进制转为 BGR Hex

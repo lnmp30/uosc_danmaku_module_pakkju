@@ -60,8 +60,8 @@ mpv_pakkujs/
 | 文件 | 状态 | 说明 |
 |---|---|---|
 | `portable_config/scripts/uosc_danmaku/modules/pakku.lua` | **新增** | 1391 行 / 57 KB，算法本体 |
-| `portable_config/scripts/uosc_danmaku/modules/options.lua` | 修改 | 新增 22 个 `pakku_*` 选项默认值（对齐 pakku.js） |
-| `portable_config/scripts/uosc_danmaku/modules/parse.lua` | 修改 | 合并分支接入、`merge_mark` 加粗、字号缩放 |
+| `portable_config/scripts/uosc_danmaku/modules/options.lua` | 修改 | 新增 23 个 `pakku_*` 选项默认值（对齐 pakku.js） |
+| `portable_config/scripts/uosc_danmaku/modules/parse.lua` | 修改 | 合并分支接入、`merge_mark` 加粗与字号补偿、字号缩放 |
 | `portable_config/scripts/uosc_danmaku/main.lua` | 修改 | 加载顺序里加 `require("modules/pakku")` |
 | `portable_config/script-opts/uosc_danmaku.conf` | 修改 | 新增 pakku 选项段（已按 pakku.js 默认值启用） |
 
@@ -146,7 +146,7 @@ mpv_pakkujs/
 ### 合并标记的生成
 
 标记不靠正则猜，而是由 `make_mark_tag(count, cfg)` 直接生成、写进
-`entry.merge_mark`，`parse.lua` 拿它做明文比对定位再插 `{\b1}`。
+`entry.merge_mark`，`parse.lua` 拿它做明文比对定位再插 ASS 覆盖标签。
 这样换任何标记样式都不用改渲染层的正则。
 
 | 配置 | 产出 |
@@ -162,6 +162,38 @@ mpv_pakkujs/
 
 > 字形可用性：在本项目的字体环境下（Microsoft YaHei / Noto Sans CJK），
 > mpv + libass 渲染这些码位**没有**任何缺字形告警，实测 735 处标记全部正常。
+
+#### 标记的字号补偿（pakku_mark_scale）
+
+**pakku.js 没有给标记单独设过字号** —— `make_mark_meta()` 只是把
+`₍${to_subscript(cnt)}₎` 拼到文本上，剩下的交给 B 站播放器按弹幕字号渲染。
+换句话说「pakku 的字号」就是弹幕本身的字号，没有额外参数可抄。
+
+`₍₁₂₎` 之所以显得小，是因为下标字形本身就这么小。用
+`System.Drawing`（GDI+ 与 libass 走同一套字体轮廓）量 Microsoft YaHei Bold
+在 size=100 下的墨迹高度：
+
+| 内容 | 墨迹高度 | 相对正文数字 |
+|---|---|---|
+| 正文数字 `0123456789` | 78.61 | 100% |
+| 下标数字 `₀₁₂₃₄₅₆₇₈₉` | 43.56 | **55.4%** |
+| 下标括号 `₍₎` | 53.71 | 68.3% |
+| 完整标记 `₍₁₂₎` | 53.71 | 68.3% |
+
+所以 `pakku_mark_scale` 提供的是**补偿**而不是「抄」：
+
+| 取值 | 效果 |
+|---|---|
+| `1.0` | 不放大，完全还原 pakku.js 的原始观感（标记明显偏小） |
+| `1.46` | 下标括号与正文数字同高 |
+| `1.8`（默认） | 下标数字与正文数字同高，视觉上就是正常大小的数字 |
+
+实现上由 `parse.lua:760` 起算：`\fs` 取 `event_fontsize × pakku_mark_scale`，
+标签形如 `{\b1\fs90}₍₅₎`。**只对下标标记生效**，
+`mark_subscript=no` 时该项被忽略（`[xN]` 用的是普通字形，不需要补偿）。
+
+> 下标数字在 Microsoft YaHei 下是**贴着基线**的（底部 106.83 vs 正文数字
+> 107.13），所以只需要放大、不需要再补 `\rise`。
 
 ### 默认值对齐 pakku.js
 
@@ -183,16 +215,19 @@ mpv_pakkujs/
 | `pakku_mode_elevation` | true | `MODE_ELEVATION` |
 | `pakku_mark` | `suffix` | `DANMU_MARK`（pakku.js 是 `prefix`） |
 | `pakku_mark_subscript` | true | `DANMU_SUBSCRIPT` |
+| `pakku_mark_scale` | 1.8 | **无对应项**（pakku.js 不给标记单独设字号，见上） |
 | `pakku_mark_threshold` | 1 | `MARK_THRESHOLD` |
 | `pakku_forcelist` | 23333 / 66666 | `FORCELIST` |
 | `pakku_shrink_threshold` / `pakku_drop_threshold` | 0 | `SHRINK_THRESHOLD` / `DROP_THRESHOLD` |
 
-**两处有意偏离**（都写在 `options.lua` 的注释里）：
+**三处有意偏离**（都写在 `options.lua` 的注释里）：
 
 1. **标记的位置**：`pakku_mark=suffix`。pakku.js 默认 `DANMU_MARK='prefix'`，
    标在弹幕开头（`₍₁₂₎文本`）；本实现按使用习惯标在**末尾**（`文本₍₁₂₎`）。
-   标记的**内容**（下标数字 + 下标括号）与 pakku.js 完全一致。
-2. `pakku_enable` 在库层面（`options.lua`）默认仍是 `false`，
+2. **标记的字号**：`pakku_mark_scale=1.8`。pakku.js 不设，标记按弹幕字号渲染，
+   下标字形只有正文数字的 55% 高，看着偏小。本实现用 `\fs` 补偿到与正文数字同高。
+   调到 `1` 即完全还原 pakku.js 的观感。
+3. `pakku_enable` 在库层面（`options.lua`）默认仍是 `false`，
    但本项目自带的 `uosc_danmaku.conf` 里显式写了 `pakku_enable=yes`。
    这样库升级不会突然改变已有用户的行为，而本项目装好即用。
 
@@ -410,6 +445,8 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 | ASS 标记 | `{\b1\i1}` 是「粗体 + **斜体**」，`\i1` 就是斜体开关。合并标记只需要粗体，写成 `{\b1}` 即可；0.1.0 版本误带了 `\i1`，后缀会显示成斜体 |
 | 加粗不要用正则猜 | 早期写法 `gsub("x(%d+)$", ...)` 既会把正文里恰好以 `x12` 结尾的弹幕误加粗，也锁死了标记的样式。现在由 `pakku.lua` 给出 `merge_mark`，`parse.lua` 用**明文比对**定位（先试末尾、再试开头）后插 `{\b1}`，换任何标记样式都不用动渲染层 |
 | 下标字符的字体覆盖 | 标记用的 `U+2080-2089` / `U+208D-E` 不在基本区，字体缺字形时会显示成方框。本项目字体（Microsoft YaHei / Noto Sans CJK）渲染正常；换字体后可用 `--msg-level=all=v` 观察 libass 有无缺字形告警 |
+| 下标字形天生小 | 同一字号下 `₀-₉` 只有正文数字的 55% 高，直接拼上去会显得很小。解决方式不是换字体而是 `\fs` 补偿，见 §6「标记的字号补偿」 |
+| mpv 的 `--vo=image` 不含 OSD | 想截图验证弹幕/标记渲染时，`--vo=image` 产出的是**纯视频帧**，OSD 完全不会被合成进去（实测连 `--osd-msg1` 都不出现）。要么用 `--vo=gpu` + `window` 模式截图，要么直接量字体轮廓（本项目采用后者） |
 | 测试时 `--script-opts` 会被覆盖 | mpv 的 `script-opts` 是单个字符串选项，**重复传会后者覆盖前者**。要一次传多个必须用逗号：`--script-opts=a-b=1,a-c=2` |
 
 ---
@@ -440,7 +477,7 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 | `pinyin_distance("是","事")` | `0` |
 | `pinyin_distance("你","我")` | `> 0` |
 | `pinyin_group_count()` | `398` |
-| `build_config({})` 的 16 个字段 | 全部等于 §6 表里的 pakku.js 默认值 |
+| `build_config({})` 的 17 个字段 | 全部等于 §6 表里的 pakku.js 默认值 |
 | 合并 3 条相同弹幕后的 `text` | `恭喜₍₃₎`，`merge_mark == "₍₃₎"` |
 | `to_subscript` 覆盖多位数 | 1/2/5/9/10/12/23/47/69/100/1234 → `₁`…`₁₂₃₄` |
 | `mark_subscript=false` | 标记变成 `[x3]` |
@@ -493,8 +530,8 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 检查标记格式与字号：
 
 ```
-2.00  72  {\move(2100, 251, -180, 251)}{\c&HFFFFFF&}簽{\b1}₍₁₀₎
-0.00  50  {\move(2157, 51, -237, 51)}{\c&H3DE5FD&}2024.12.23 簽{\b1}₍₂₎
+0.00  50  {\pos(960, 869)}{\c&HFFFFFF&}2026/2/5簽到{\b1\fs90}₍₅₎
+2.00  72  {\move(2100, 251, -180, 251)}{\c&HFFFFFF&}簽{\b1\fs130}₍₁₀₎
 ```
 
 自检项（对 dump 结果做计数）：
@@ -502,10 +539,16 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 | 检查 | 期望 |
 |---|---|
 | 含 `\i1`（斜体）的行数 | `0` |
-| 含 `{\b1}₍N₎` 的行数 | `> 0`（本次实测 735） |
-| 含旧样式 `{\b1}xN` 的行数 | `0` |
-| 字号分布 | 从 `50` 起，最大不超过 `100`（即 2 倍上限） |
+| 含 `{\b1\fsN}₍M₎` 的行数 | `> 0`（本次实测 735） |
+| `\fsN` 的值与 `event_fontsize × pakku_mark_scale` 是否一致 | 全部一致（脚本逐条算过，735/735） |
+| 含下标 `₍` 但不含 `\fs` 的行数 | `0` |
+| `mark_subscript=no` 时含 `[xN]` 的行数 | 735，且 `\fs` 出现 `0` 次 |
+| 字号分布（第 2 列） | 从 `50` 起，最大不超过 `100`（即 2 倍上限） |
 | libass 缺字形告警 | 无（下标码位 `U+2080-2089` / `U+208D-E` 在本项目字体下可渲染） |
+
+> 注意区分两个字号：dump 第 2 列的 `font_size` 是**弹幕正文**的字号（受
+> `pakku_enlarge_*` 控制，上限 100）；标记的 `\fs` 是在它基础上再乘
+> `pakku_mark_scale`，所以会出现 `\fs130` 这种超过 100 的值，属正常。
 
 ### 11.4 语法检查
 
@@ -573,6 +616,21 @@ end
 位置（前/后缀）由 `make_mark()`（`pakku.lua:1071`）按 `cfg.mark` 拼装。
 渲染层不用改——`parse.lua` 拿的是 `entry.merge_mark` 明文，多长的标记都能定位。
 
+### 调整标记的字号
+
+在 `parse.lua:760` 一带，`pakku_mark_scale` 被折算成 ASS 覆盖标签：
+
+```lua
+local tag = "{\\b1"
+if mark_scale ~= 1 then
+    tag = tag .. string.format("\\fs%d", math.max(1, math.floor(event_fontsize * mark_scale + 0.5)))
+end
+tag = tag .. "}"
+```
+
+想改补偿策略（比如换成 `\fs` + `\rise` 的组合，或在非下标标记上也生效），
+改这一段即可。下标数字本身贴基线，不需要 `\rise`。
+
 ---
 
 ## 13. 已知限制
@@ -594,6 +652,11 @@ end
   Superscripts and Subscripts 区段，不在 CJK 基本区。本项目字体渲染正常，
   但换到字形不全的字体上可能显示成方框；这种情况把
   `pakku_mark_subscript=no` 切回 `[xN]` 即可。
+- **标记的字号是补偿值不是 pakku 原值**：pakku.js 不设标记字号，
+  本实现的 `pakku_mark_scale=1.8` 是按 Microsoft YaHei 的字形度量算出来的。
+  换字体后这个比例不一定仍然精确，觉得偏大或偏小直接改数值即可。
+- **标记宽度不计入布局**：`parse.lua` 用 `clean_text`（不含标记）算文本宽度，
+  所以标记会额外多出一截；标记放大后这一截会变长（滚动弹幕尾部更明显）。
 
 ---
 

@@ -74,6 +74,13 @@ options = {
     -- 标记是否用下标数字：yes -> ₍₁₂₎，no -> [x12]
     -- pakku.js: DANMU_SUBSCRIPT = true
     pakku_mark_subscript = true,
+    -- 标记的额外放大倍数，用来补偿下标字形天生偏小的问题。
+    -- 实测 Microsoft YaHei Bold：下标数字 ₀-₉ 只有正文数字的 55% 高。
+    --   1.0  = 不放大（pakku.js 的原始观感，标记明显偏小）
+    --   1.46 = 下标括号与正文数字同高
+    --   1.8  = 下标数字与正文数字同高（当前默认）
+    --! 只对下标标记生效；mark_subscript=no 时该项无效
+    pakku_mark_scale = 1.8,
     -- 合并数量超过该值时才会添加标记
     -- pakku.js: MARK_THRESHOLD = 1
     pakku_mark_threshold = 1,
