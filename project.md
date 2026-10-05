@@ -1071,9 +1071,10 @@ HTTP 请求失败：Calling failed. Exit code: -2
   | ② 搜索 / 服务器数 | `get_animes` 开头 |
   | ③ 每个服务器的结果或失败 | `make_handle_response` |
   | ④ 合计结果数 | `do_final_update` |
-  | ⑤ 选中项 | `run_menu_item` |
-  | ⑥ 剧集列表条数 | `get_episodes` 末尾 |
-  | ⑦ 拉取弹幕的 URL | `fetch_danmaku` |
+  | ⑤ 显示哪种选择界面 | `do_final_update` / `get_episodes` 的菜单分支（0.8.5 新增） |
+  | ⑥ 选中项 | `run_menu_item` |
+  | ⑦ 剧集列表条数 | `get_episodes` 末尾 |
+  | ⑧ 拉取弹幕的 URL | `fetch_danmaku` |
 
 - 另外两处改成**始终可见**（不依赖 `danmaku_verbose_osd`）：
   - `do_final_update` 里结果为 0 时汇总最后一个错误并 `show_message`
@@ -1149,3 +1150,46 @@ end
 
 单测（桩件驱动 `trace_osd`，8 项）：开关关 → 写日志不上屏；开关开 → 两者都做；
 无 varargs / 格式串参数不足 / `options` 为 nil 三种边界都不抛错。
+
+### ⑤：选择界面这一步（0.8.5）
+
+第三份日志证明 ④ 之后还有**一个完全静默的分支**，而且正是用户卡住的地方。
+`do_final_update` 搜完之后有三条路，原来一条日志都不写：
+
+| 分支 | 条件 | 结果 |
+|---|---|---|
+| uosc 菜单 | `uosc_available` | 能点（前提是前端把触摸转成鼠标） |
+| `mp.input` 列表 | `input_loaded` | **纯键盘**，安卓上选不了 |
+| 什么都没有 | 两者皆假 | 连菜单都不弹、不报错 —— 按下去毫无反应 |
+
+第三条是真正的黑洞，现在会 `msg.error` + `show_message`。前两条也各有 `⑤` 行，
+直接写明「显示的是哪种界面，几条」。`get_episodes` 的剧集列表同理（⑦）。
+
+**这份日志的结论**：`BOCCHI THE ROCK` 搜到 2 条（③④ 都印出来了），
+`自动选择` 0 次（开关关），全日志 `uosc` 0 行（uosc 没跑）→ 落到键盘列表。
+**搜得到，选不了** —— 解法就是 `danmaku_auto_select=yes`（0.8.3 已实现）。
+
+### 端到端验证（0.8.5）
+
+前几版受限于「mpv 的 subprocess 走管道捕获被沙箱拦」，只能验到 ③ 失败。
+这次合成视频 + 隔离 `MPV_HOME`（`_t/scripts/uosc_danmaku/`）让 mpv 真实加载脚本，
+`--script-opts` 指向一个必定连不上的地址 `http://127.0.0.1:1`，
+于是流程一路走到 ⑤：
+
+```
+[flow] ① 关键词：BOCCHI THE ROCK
+[flow] ② 搜索「BOCCHI THE ROCK」，1 个服务器
+[flow] ③ http://127.0.0.1:1 失败：exit -3 子进程没起来（可能缺 curl）
+[flow] ④ 合计 0 条搜索结果
+[flow] ⑤ 显示键盘列表（0 条），等待回车确认
+```
+
+注意 `Starting subprocess: [curl, …]` + `Subprocess failed: init` —— 失败发生在
+**起进程**这一步，不是网络。这正好绕过了沙箱限制，把 ⑤ 跑通。
+
+关键一步：**用同样的命令再跑一遍，但 `danmaku_verbose_osd` 保持默认（关）**，
+`[flow]` ①②③④⑤ 一条不少、OSD 一条没有 —— 0.8.4 的核心主张得到端到端确认。
+
+两个坑记一下：`--no-config` 会连带**不加载 `MPV_HOME/scripts`**；
+`--script=<file>` 的 `package.path` 不含脚本目录，`require("modules/…")` 会失败。
+必须用 `MPV_HOME/scripts/<名字>/main.lua` 这种目录布局。

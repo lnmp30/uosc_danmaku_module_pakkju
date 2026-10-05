@@ -571,7 +571,13 @@ script-message danmaku-quick-search
    D/uosc_danmaku: [flow] ④ 合计 0 条搜索结果
    ```
 
-   停在哪一号，问题就在那一步。
+   停在哪一号，问题就在那一步。**⑤ 尤其重要**，它说明屏幕上是哪种选择界面：
+
+   | ⑤ 的输出 | 含义 |
+   |---|---|
+   | `显示 uosc 菜单` | 装了 uosc、前端也能把触摸转成鼠标，就没事 |
+   | `显示键盘列表` | 弹的是 `mp.input` 的 `选择:` 列表，**安卓上根本选不了** → 开 `danmaku_auto_select=yes` |
+   | `无可用的选择界面` | 既没 uosc 也没 `mp.input`。这条以前是完全静默的 |
 
    想看这些步骤**同时也显示在屏幕上**，再打开：
 
@@ -584,9 +590,10 @@ script-message danmaku-quick-search
    ② 搜索「孤独摇滚」，1 个服务器
    ③ https://... 失败：exit 7 连不上服务器：Failed to connect
    ④ 合计 0 条搜索结果
-   ⑤ 选中：孤独摇滚！  （评分 144.2）
-   ⑥ 剧集列表 13 条
-   ⑦ 拉取弹幕：https://.../api/v2/comment/12345?withRelated=true&chConvert=0
+   ⑤ 显示键盘列表（2 条），等待回车确认
+   ⑥ 选中：孤独摇滚！  （评分 144.2）
+   ⑦ 剧集列表 13 条
+   ⑧ 拉取弹幕：https://.../api/v2/comment/12345?withRelated=true&chConvert=0
    ```
 
    排查完记得改回 `no`，否则屏幕上会一直刷。**日志不受这个开关影响。**

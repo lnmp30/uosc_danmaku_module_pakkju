@@ -138,7 +138,7 @@ end
 local function run_menu_item(item, why)
     msg.info(string.format("自动选择：%s（%s）", tostring(item.title), tostring(why)))
     show_message("自动匹配：" .. tostring(item.title), 3)
-    trace_osd("⑤ 选中：%s（%s）", tostring(item.title), tostring(why))
+    trace_osd("⑥ 选中：%s（%s）", tostring(item.title), tostring(why))
 
     if input_loaded then input.terminate() end
     if uosc_available then
@@ -189,7 +189,7 @@ local function auto_select_should_skip(stage, context, item)
     local key = stage .. "\0" .. tostring(context) .. "\0" .. tostring(item.title)
     if not auto_select_is_duplicate(key) then return false end
     msg.info(string.format("自动选择：忽略重复触发（%s / %s）", stage, tostring(item.title)))
-    trace_osd("⑤ 忽略重复的自动选择：%s", tostring(item.title))
+    trace_osd("⑥ 忽略重复的自动选择：%s", tostring(item.title))
     return true
 end
 
@@ -279,15 +279,23 @@ local function make_handle_response(ctx)
             end
 
             if uosc_available then
+                trace_osd("⑤ 显示 uosc 菜单（%d 条），等待用户点选", #final_items)
                 latest_menu_anime = update_menu_uosc(ctx.menu_type, ctx.menu_title, final_items, ctx.footnote, ctx.menu_cmd, ctx.query)
-            else
+            elseif input_loaded then
+                -- 走到这里说明没装 uosc，只能弹 mpv 自带的 input.select 列表。
+                -- 那个列表是纯键盘的（上下键 + 回车），安卓上根本选不了 ——
+                -- 这一段以前完全没有日志，日志断在 ④ 就没了，看不出是「卡在选」。
+                trace_osd("⑤ 显示键盘列表（%d 条），等待回车确认", #final_items)
                 latest_menu_anime = utils.format_json(final_items)
-                if input_loaded then
-                    input.terminate()
-                    mp.add_timeout(0.1, function()
-                        open_menu_select(final_items)
-                    end)
-                end
+                input.terminate()
+                mp.add_timeout(0.1, function()
+                    open_menu_select(final_items)
+                end)
+            else
+                -- 既没有 uosc 也没有 mp.input：什么都弹不出来，必须说话
+                trace_osd("⑤ 无可用的选择界面（uosc=%s, mp.input=%s）", tostring(uosc_available), tostring(input_loaded))
+                msg.error("没有可用的选择界面：uosc 未运行且 mp.input 不可用，搜索结果无法展示")
+                show_message("无法显示选择列表（缺少 uosc 和 mp.input）", 8)
             end
         end
 
@@ -606,7 +614,7 @@ function get_episodes(animeTitle, bangumiId, api_server)
             end
         end
 
-        trace_osd("⑥ 剧集列表 %d 条", #items)
+        trace_osd("⑦ 剧集列表 %d 条", #items)
 
         -- 自动选择模式：按文件名推断的集数自动选集，不弹菜单
         if options.danmaku_auto_select then
@@ -620,14 +628,20 @@ function get_episodes(animeTitle, bangumiId, api_server)
         end
 
         if uosc_available then
+            trace_osd("⑦ 显示 uosc 剧集菜单（%d 条），等待用户点选", #items)
             footnote = mp.get_property("filename")
             update_menu_uosc(menu_type, menu_title, items, footnote)
         elseif input_loaded then
+            trace_osd("⑦ 显示键盘剧集列表（%d 条），等待回车确认", #items)
             show_message("", 0)
             input.terminate()
             mp.add_timeout(0.1, function()
                 open_menu_select(items)
             end)
+        else
+            trace_osd("⑦ 无可用的选择界面（uosc=%s, mp.input=%s）", tostring(uosc_available), tostring(input_loaded))
+            msg.error("没有可用的选择界面：uosc 未运行且 mp.input 不可用，剧集列表无法展示")
+            show_message("无法显示剧集列表（缺少 uosc 和 mp.input）", 8)
         end
     end)
     active_request_type = menu_type
