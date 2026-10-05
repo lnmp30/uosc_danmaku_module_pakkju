@@ -26,6 +26,76 @@
 
 ---
 
+## [0.7.0] - 2026-10-05
+
+新增 `danmaku-quick-search`：给没有键盘的环境（安卓 mpv、遥控器、手柄）
+提供一键搜索，跳过需要打字和回车的搜索框。
+
+### 背景
+
+弹幕搜索有两条路径，都要按回车：
+
+| 路径 | 位置 | 卡点 |
+|---|---|---|
+| uosc 菜单 | `modules/menu.lua` `open_input_menu_uosc()` | `search_debounce = "submit"` |
+| mpv 原生输入框 | `modules/menu.lua` `open_input_menu_get()` | `mp.input.get()` 是打字框 |
+
+安卓上没有回车键，就卡在这一步。
+
+但搜索框里本来**就预填了**番剧名（uosc 路径 `search_suggestion = parse_title()`，
+原生路径 `default_text = title`），所以缺的不是打字，只是「确认」。
+
+### 新增
+
+- **`danmaku-quick-search` script-message**（`modules/menu.lua`）：
+  直接拿 `parse_title()` 的结果调已有的 `search-anime-event`，跳过搜索框。
+  结果照常以菜单列出，点选即可。
+
+  ```
+  script-message danmaku-quick-search
+  script-message danmaku-quick-search "孤独摇滚"        # 可选参数
+  ```
+
+  两个细节：
+  - `search-anime-event` 用 `|` 分隔「名称|类型」、`@` 分隔过滤词。
+    只有**从文件名解析出来的**关键词会把这两个字符替换成空格，
+    手动传入的参数原样保留，方便继续用高级语法
+  - `parse_title()` 返回空时给提示并 warn，不发无意义的空搜索
+
+- **`danmaku_quick_search_key` 选项**（`modules/options.lua` +
+  `script-opts/uosc_danmaku.conf`）：一键搜索的快捷键。
+  默认空字符串 = **不绑定**，不改变现有行为。绑定逻辑在 `main.lua`。
+  安卓端也可以留空、直接让前端自定义按钮执行
+  `script-message danmaku-quick-search`。
+
+### 为什么不用 uosc 的 `search_submit`
+
+uosc 的 `Menu.lua` 支持 `search_submit`，加上去能让搜索菜单**打开即自动搜索**，
+更省事。但它只解决「提交」不解决「触发」——安卓上还得先有办法点开那个菜单，
+而 uosc 菜单靠鼠标区域点击（`cursor:zone('primary_down', ...)`），
+前端不把触摸转成鼠标事件就点不动。所以选了可由前端按钮直接调用的
+script-message 方案。两者不冲突，将来确认前端支持触摸转鼠标，
+把 `search_submit = true` 加进 `open_input_menu_uosc()` 的 `menu_props` 即可。
+
+### 验证
+
+隔离 `MPV_HOME` + 合成视频 + 只负责发消息的触发脚本，跑 mpv 看日志：
+
+```
+[2.030][i][uosc_danmaku] 一键搜索：qs DMG&VCB-Studio BOCCHI THE ROCK   -- 自动解析，| @ 被清掉
+[2.026][i][uosc_danmaku] 一键搜索：孤独摇滚 | tv @SP                   -- 手动传参，| @ 原样保留
+```
+
+三次运行日志均无 `[error]` 与 `stack traceback`。
+
+### 备注
+
+- 本次未改动 pakku 合并逻辑，合并结果与 0.6.1 完全一致。
+- `readme.md` 新增「没有键盘的环境」一节，含一键搜索用法与
+  「完全不交互」（`auto_load` / 本地同名 xml）的替代方案。
+
+---
+
 ## [0.6.1] - 2026-10-05
 
 重写 git 历史，处理掉两处已经进入历史的隐私 / 版权问题。

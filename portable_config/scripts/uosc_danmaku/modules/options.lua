@@ -126,6 +126,11 @@ options = {
     -- 自定义插件快捷键，若 mpv.conf 里设置 input-default-bindings=no 将禁用以下两个选项
     open_search_danmaku_menu_key = "Ctrl+d",
     show_danmaku_keyboard_key = "j",
+    -- 一键搜索的快捷键：直接拿文件名解析出的番剧名去搜，不弹需要打字的搜索框。
+    -- 默认留空表示不绑定；给没有键盘的环境用（安卓 mpv、遥控器、手柄），
+    -- 可以填一个 mpv 认得的键名，也可以留空、改用
+    -- script-message danmaku-quick-search 绑到安卓前端的自定义按钮上
+    danmaku_quick_search_key = "",
     -- 中文简繁转换。0-不转换，1-转换为简体，2-转换为繁体
     chConvert = 0,
     --滚动弹幕的显示时间

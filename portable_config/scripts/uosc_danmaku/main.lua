@@ -736,6 +736,13 @@ end)
 mp.add_key_binding(options.show_danmaku_keyboard_key, "show_danmaku_keyboard", function()
     mp.commandv("script-message", "show_danmaku_keyboard")
 end)
+-- 一键搜索：给没有键盘的环境用（安卓 mpv、遥控器、手柄）。
+-- 默认不绑定（danmaku_quick_search_key 为空），要绑就填一个键名。
+if type(options.danmaku_quick_search_key) == "string" and options.danmaku_quick_search_key ~= "" then
+    mp.add_key_binding(options.danmaku_quick_search_key, "danmaku_quick_search", function()
+        mp.commandv("script-message", "danmaku-quick-search")
+    end)
+end
 
 -------------- 事件注册 --------------
 mp.register_script_message("danmaku-delay", function(...)

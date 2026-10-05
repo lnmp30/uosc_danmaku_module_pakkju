@@ -1433,6 +1433,46 @@ mp.register_script_message("search-anime-event", function(query)
     get_animes(search_name, filter_note)
 end)
 
+-- 一键搜索：给没有键盘 / 打不了字的环境用（安卓 mpv、遥控器、手柄等）。
+-- 直接拿文件名解析出的番剧名发起搜索，跳过需要打字和回车的搜索框，
+-- 搜索结果照常以菜单列出，只要点选即可。
+--
+-- 用法：
+--   script-message danmaku-quick-search              -- 用 parse_title() 自动解析
+--   script-message danmaku-quick-search "孤独摇滚"    -- 手动指定关键词（可选）
+--
+-- 安卓端可以把它绑到自定义按钮上；桌面端可以绑键，见
+-- uosc_danmaku.conf 里的 danmaku_quick_search_key。
+mp.register_script_message("danmaku-quick-search", function(override)
+    local query = override
+    local from_filename = false
+
+    -- 没给关键词就从文件名解析
+    if type(query) ~= "string" or query:match("^%s*$") then
+        query = parse_title()
+        from_filename = true
+    end
+
+    if type(query) ~= "string" or query:match("^%s*$") then
+        show_message("无法从文件名解析出番剧名，请改用搜索菜单手动输入", 3)
+        msg.warn("danmaku-quick-search: 没有可用的搜索关键词")
+        return
+    end
+
+    if from_filename then
+        -- search-anime-event 约定用 "|" 分隔「名称|类型」、用 "@" 分隔过滤词。
+        -- 文件名里出现这两个字符会被误解，替换掉。
+        -- 手动传入的关键词不动，留出使用高级语法的余地。
+        query = query:gsub("[|@]", " ")
+    end
+    query = query:gsub("%s+", " "):gsub("^%s*(.-)%s*$", "%1")
+
+    msg.info("一键搜索：" .. query)
+    show_message("搜索弹幕：" .. query, 2)
+
+    mp.commandv("script-message-to", mp.get_script_name(), "search-anime-event", query)
+end)
+
 mp.register_script_message("search-episodes-event", function(animeTitle, bangumiId, api_server)
     perform_cancel_active_request()
     if uosc_available then

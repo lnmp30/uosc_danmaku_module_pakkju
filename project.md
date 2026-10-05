@@ -73,9 +73,10 @@ mpv_pakkujs/
 | 文件 | 状态 | 说明 |
 |---|---|---|
 | `portable_config/scripts/uosc_danmaku/modules/pakku.lua` | **新增** | 1398 行 / 57 KB，算法本体 |
-| `portable_config/scripts/uosc_danmaku/modules/options.lua` | 修改 | 新增 23 个 `pakku_*` 选项默认值（对齐 pakku.js） |
+| `portable_config/scripts/uosc_danmaku/modules/options.lua` | 修改 | 新增 23 个 `pakku_*` 选项 + 一键搜索键位选项 |
 | `portable_config/scripts/uosc_danmaku/modules/parse.lua` | 修改 | 合并分支接入、`merge_mark` 加粗与字号补偿、字号缩放 |
-| `portable_config/scripts/uosc_danmaku/main.lua` | 修改 | 加载顺序里加 `require("modules/pakku")` |
+| `portable_config/scripts/uosc_danmaku/modules/menu.lua` | 修改 | 新增 `danmaku-quick-search` 消息（无键盘环境的一键搜索） |
+| `portable_config/scripts/uosc_danmaku/main.lua` | 修改 | `require("modules/pakku")`、一键搜索的键位绑定 |
 | `portable_config/script-opts/uosc_danmaku.conf` | 修改 | 新增 pakku 选项段（已按 pakku.js 默认值启用） |
 
 ---
@@ -778,3 +779,65 @@ MIT（uosc_danmaku）与 GPLv3 兼容，可并入 GPLv3 作品一起分发；
   SHA 访问，网页缓存也可能还在。要彻底清除需要联系 GitHub Support，或者删库重建。
 - 本仓库的 `user.email` 已改成本地配置（`git config --local`），全局配置未动。
   想在所有仓库统一，执行 `git config --global user.email "209313510+lnmp30@users.noreply.github.com"`。
+
+---
+
+## 16. 无键盘环境支持（`danmaku-quick-search`）
+
+### 问题
+
+弹幕搜索有两条路径，都要**按回车**才能提交：
+
+| 路径 | 位置 | 卡点 |
+|---|---|---|
+| uosc 菜单 | `menu.lua:514` `open_input_menu_uosc()` | `search_debounce = "submit"`，脚注写着「使用 enter 或 ctrl+enter 进行搜索」 |
+| mpv 原生输入框 | `menu.lua:479` `open_input_menu_get()` | `mp.input.get()` 本身就是打字框 |
+
+安卓 mpv、遥控器、手柄都没有回车键。
+
+但搜索框里**本来就预填好了**番剧名：uosc 路径是 `search_suggestion = parse_title()`，
+原生路径是 `default_text = title`。所以缺的不是「打字」，只是「确认」。
+
+### 做法
+
+在 `menu.lua:1446` 加了 `danmaku-quick-search` 消息，直接拿 `parse_title()`
+的结果调已有的 `search-anime-event`（`menu.lua:1415`），跳过搜索框：
+
+```
+script-message danmaku-quick-search
+script-message danmaku-quick-search "孤独摇滚"        -- 可选参数，手动指定
+```
+
+两个细节：
+
+1. **关键词的 `|` 和 `@` 处理**：`search-anime-event` 约定用 `|` 分隔
+   「名称\|类型」、`@` 分隔过滤词。文件名里出现这两个字符会被误解，
+   所以**只有从文件名解析出来的**关键词才替换成空格；
+   手动传入的参数原样保留，留出用高级语法的余地。
+2. **`parse_title()` 返回空**时给提示并 warn，不做无意义的空搜索。
+
+键位绑定在 `main.lua:741`，由 `options.danmaku_quick_search_key` 控制，
+默认空字符串 = 不绑定（不改变现有行为）。
+
+### 为什么不直接用 `search_submit`
+
+uosc 的 `Menu.lua:151` 支持 `search_submit`，加上去就能让搜索菜单**打开即自动搜索**，
+是更省事的一条路。但它只解决「提交」，不解决「触发」——
+在安卓上还得先有办法点开那个菜单，而 uosc 的菜单靠鼠标区域点击
+（`Menu.lua:1751` 用 `cursor:zone('primary_down', ...)`），
+前端不把触摸转成鼠标事件就点不动。所以选了更独立、可由前端按钮直接调用的
+script-message 方案。
+
+如果哪天确认前端支持触摸转鼠标，把 `search_submit = true` 加进
+`open_input_menu_uosc()` 的 `menu_props` 即可，两者不冲突。
+
+### 验证
+
+用隔离的 `MPV_HOME` + 合成视频，加一个只负责发消息的触发脚本，跑 mpv 看日志：
+
+```
+[2.030][i][uosc_danmaku] 一键搜索：qs DMG&VCB-Studio BOCCHI THE ROCK     -- 自动解析，| @ 被清掉
+[2.026][i][uosc_danmaku] 一键搜索：孤独摇滚 | tv @SP                     -- 手动传参，| @ 原样保留
+```
+
+三次运行日志里都没有 `[error]` 或 `stack traceback`。
