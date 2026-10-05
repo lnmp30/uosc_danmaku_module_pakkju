@@ -59,7 +59,7 @@ function get_danmaku_fallback(query)
     local function do_fallback()
         if options.fallback_server == "" then return end
         local url = options.fallback_server .. "/?ac=dm&url=" .. query
-        msg.verbose("尝试获取弹幕：" .. url)
+        msg.info("尝试获取弹幕：" .. url)
 
         local args = make_danmaku_request_args("GET", url)
         if not args then return end
@@ -285,7 +285,7 @@ local function match_anime()
     local function per_response(server, err, out)
         if matched then return end
         if err then
-            msg.debug(("search anime failed for %s: %s"):format(server, tostring(err)))
+            msg.warn(("搜索番剧失败 %s: %s"):format(server, tostring(err)))
             return
         end
         local data = utils.parse_json(out)
@@ -320,7 +320,7 @@ local function match_anime()
                     target_title = title .. " 第一季"
                 end
                 local score = jaro_winkler(target_title, animeTitle)
-                msg.debug(("候选: %s -> 相似度 %.3f"):format(animeTitle, score))
+                msg.info(("候选: %s -> 相似度 %.3f"):format(animeTitle, score))
                 if score > best_score then
                     best_score = score
                     best_match = anime
@@ -398,7 +398,7 @@ local function match_file(file_path, file_name, callback)
     local function per_response(server, err, out)
         if matched then return end
         if err then
-            msg.debug(("match failed for %s: %s"):format(server, tostring(err)))
+            msg.warn(("匹配番剧失败 %s: %s"):format(server, tostring(err)))
             return
         end
         local data = utils.parse_json(out)
@@ -523,7 +523,7 @@ end
 function fetch_danmaku(episodeId, from_menu, api_server)
     local url = api_server .. "/api/v2/comment/" .. episodeId .. "?withRelated=true&chConvert=0"
     show_message("弹幕加载中...", 30)
-    msg.verbose("尝试获取弹幕：" .. url)
+    msg.info("尝试获取弹幕：" .. url)
     trace_osd("⑦ 拉取弹幕：%s", url)
     local args = make_danmaku_request_args("GET", url)
 
@@ -596,7 +596,7 @@ end
 function add_danmaku_source_online(query, from_menu)
     set_danmaku_button()
     show_message("弹幕加载中...", 30)
-    msg.verbose("尝试获取弹幕：" .. query)
+    msg.info("尝试获取弹幕：" .. query)
 
     local servers = get_api_server_list(options.api_server)
 
@@ -624,7 +624,7 @@ function add_danmaku_source_online(query, from_menu)
     local function per_response(server, err, out)
         if matched then return end
         if err then
-            msg.debug(("extcomment failed for %s: %s"):format(server, tostring(err)))
+            msg.warn(("获取弹幕失败 %s: %s"):format(server, tostring(err)))
             return
         end
         local data = utils.parse_json(out)

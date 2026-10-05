@@ -286,7 +286,7 @@ function get_details(class, id, site, title, year, number, episodenum)
                 else
                     show_message(message, 3)
                 end
-                msg.verbose("无结果")
+                msg.info("无结果（该源没有匹配）")
                 return
             end
 
@@ -298,7 +298,7 @@ function get_details(class, id, site, title, year, number, episodenum)
                 else
                     show_message(message, 3)
                 end
-                msg.verbose("无结果")
+                msg.info("无结果（该源没有匹配）")
                 return
             end
         end
@@ -350,7 +350,7 @@ function get_details(class, id, site, title, year, number, episodenum)
         else
             show_message(message, 3)
         end
-        msg.verbose("无结果")
+        msg.info("无结果（该源没有匹配）")
     end
 end
 
@@ -375,7 +375,7 @@ local function search_query(query, class, menu)
         else
             show_message(message, 3)
         end
-        msg.verbose("无结果")
+        msg.info("无结果（该源没有匹配）")
         return
     end
 
@@ -430,7 +430,7 @@ local function search_query(query, class, menu)
         else
             show_message(message, 3)
         end
-        msg.verbose("无结果")
+        msg.info("无结果（该源没有匹配）")
     end
 end
 

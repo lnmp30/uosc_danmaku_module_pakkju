@@ -560,35 +560,56 @@ script-message danmaku-quick-search
 
 7. **按下按钮后什么都没发生 / 日志里查不到线索**
 
-   安卓前端（如 mpvex）导出的日志**只保留 info 及以上**，脚本的
-   `msg.verbose` / `msg.debug` 会被丢掉 —— 而搜索流程里的失败恰恰只记在
-   `debug` 级。以前「一条都没搜到」时更是完全静默，只弹一个空列表。
-
-   现在两种情况都会直接显示：
+   **从 0.8.4 起，导出的日志本身就够用了，不用改任何配置。**
+   整条链路会以 `[flow]` 开头写进日志（`msg.info`，屏幕上完全看不见）：
 
    ```
-   搜索无结果（最后错误：exit 7 连不上服务器：Failed to connect）
+   D/uosc_danmaku: 一键搜索：孤独摇滚
+   D/uosc_danmaku: [flow] ① 关键词：孤独摇滚
+   D/uosc_danmaku: [flow] ② 搜索「孤独摇滚」，1 个服务器
+   D/uosc_danmaku: [flow] ③ https://... 失败：连不上服务器：Failed to connect
+   D/uosc_danmaku: [flow] ④ 合计 0 条搜索结果
    ```
 
-   想看到**每一步走到哪**，打开流程跟踪：
+   停在哪一号，问题就在那一步。
+
+   想看这些步骤**同时也显示在屏幕上**，再打开：
 
    ```ini
    danmaku_verbose_osd=yes
    ```
-
-   屏幕上会依次出现（同时写日志）：
 
    ```
    ① 关键词：孤独摇滚
    ② 搜索「孤独摇滚」，1 个服务器
    ③ https://... 失败：exit 7 连不上服务器：Failed to connect
    ④ 合计 0 条搜索结果
-   ⑤ 选中：孤独摇滚！  （评分 135.0）
+   ⑤ 选中：孤独摇滚！  （评分 144.2）
    ⑥ 剧集列表 13 条
    ⑦ 拉取弹幕：https://.../api/v2/comment/12345?withRelated=true&chConvert=0
    ```
 
-   停在哪一号，问题就在那一步。排查完记得改回 `no`，否则会一直刷屏。
+   排查完记得改回 `no`，否则屏幕上会一直刷。**日志不受这个开关影响。**
+
+8. **怎么把日志抓出来（安卓）**
+
+   三条路，按省事程度排：
+
+   | 方式 | 怎么做 | 能拿到什么 |
+   |---|---|---|
+   | 看屏幕 | `danmaku_verbose_osd=yes`，复现一次 | 停在哪一号就是哪一步出问题 |
+   | 导出 App 日志 | mpvex 应用内「导出日志」 | 完整，含 `[flow]` 行 |
+   | 写日志文件 | `mpv.conf` 加下面两行 | 最全，含 `verbose`/`debug` |
+
+   ```ini
+   log-file=/storage/emulated/0/mpv/mpv.log
+   msg-level=all=info,uosc_danmaku=v
+   ```
+
+   ⚠️ 第三种的日志文件涨得很快，排查完记得删掉这两行。
+
+   发日志给别人排查时，**顺手删掉隐私**：`uosc_danmaku.conf` 里的
+   `api_server`、`tmdb_api_key`，以及日志里的文件路径 / 网盘账号信息。
 
 ---
 

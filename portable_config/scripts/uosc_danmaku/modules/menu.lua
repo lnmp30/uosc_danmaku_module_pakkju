@@ -295,7 +295,9 @@ local function make_handle_response(ctx)
             -- 记下最后一个错误，全部服务器都失败时汇总报给用户
             ctx.last_error = err
             trace_osd("③ %s 失败：%s", server, http_error_hint(err))
-            msg.debug(("search anime failed for %s: %s"):format(server, tostring(err)))
+            -- 曾经是 msg.debug：脚本默认只输出 info 及以上，导致服务器全挂时
+            -- 日志里也只剩一行「一键搜索：xxx」，完全无从判断
+            msg.warn(("搜索番剧失败 %s: %s"):format(server, tostring(err)))
             ctx.remaining.n = math.max(0, ctx.remaining.n - 1)
             if ctx.remaining.n == 0 then pcall(do_final_update) end
             return
@@ -445,7 +447,7 @@ function get_animes(query, filter_note)
         show_message(initial_message, 30)
     end
 
-    msg.verbose("尝试获取番剧数据，servers: " .. table.concat(servers, ", ") .. " query: " .. query)
+    msg.info("尝试获取番剧数据，servers: " .. table.concat(servers, ", ") .. " query: " .. query)
     trace_osd("② 搜索「%s」，%d 个服务器", query, #servers)
 
     local build_args = make_build_args(encoded_query)

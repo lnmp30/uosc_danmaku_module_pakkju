@@ -597,7 +597,7 @@ function convert_danmaku_to_xml(danmaku_out)
 
     if #danmakus == 0 then
         show_message("弹幕内容为空，无法保存", 3)
-        msg.verbose("弹幕内容为空，无法保存")
+        msg.warn("弹幕内容为空，无法保存")
         COMMENTS = {}
         return false
     end
@@ -704,7 +704,8 @@ function convert_danmaku_to_ass_events(force)
     if #danmakus == 0 then
         if not force then
             show_message("该集弹幕内容为空，结束加载", 3)
-            msg.verbose("该集弹幕内容为空，结束加载")
+            -- 这条以前只在 verbose 级，而它正是「按了按钮没反应」最常见的终点
+            msg.warn("该集弹幕内容为空，结束加载")
         end
         COMMENTS = {}
         return

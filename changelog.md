@@ -26,6 +26,95 @@
 
 ---
 
+## [0.8.4] - 2026-10-06
+
+拿到第二份安卓日志（`mpvplayer_logs (5).txt`，1158 行）。这次日志格式完整，
+但**结论是「日志本身不够用」** —— 于是把流程日志从「要手动开」改成「默认就有」。
+
+### 日志里能看到什么
+
+9 次 `一键搜索：xxx`，其中 6 次是 `孤独摇滚`、3 次是 `孤独摇滚 | tv`。
+视频是 `[DMG&VCB-Studio] BOCCHI THE ROCK! [01]...mkv`。
+
+- **按钮是通的**：脚本加载了，`script-message` 收到了，
+  `parse_title()` 从文件名解析出了 `孤独摇滚`。
+- `已解析 N 条弹幕`（info 级，本来就该出现）**一次都没有** ——
+  说明全程没有任何一集成功加载到弹幕。
+- `curl` / `Subprocess` / `Exit code` 出现 **0 次**，
+  danmaku 相关的 error/warn **0 次**。
+
+关于 `孤独摇滚 | tv`：`search-anime-event` 约定用 `|` 分隔「名称|类型」，
+而 `danmaku-quick-search` 走文件名解析时会主动把 `|` 和 `@` 替换成空格
+（`menu.lua` 里那段 `gsub("[|@]", " ")`）。所以这 3 次**不是**文件名解析来的，
+是前端按钮显式带了参数 —— 例如配成了
+`script-message danmaku-quick-search "孤独摇滚 | tv"`。
+
+### 问题
+
+日志里 `uosc_danmaku` 总共只有 9 行，全是 `一键搜索`。也就是说：
+
+> 一次完整的搜索流程，日志里只留下「按了按钮」这一行。
+
+原因是流程里其余节点要么在 `debug` 级、要么被 `danmaku_verbose_osd` 挡着，
+而 mpv 脚本默认只输出 info 及以上。上一版加的 `danmaku_verbose_osd`
+要求用户先改配置 —— 但**排查问题时最需要的恰恰是「什么都不用配就能拿到线索」**。
+
+### 修改
+
+**`modules/utils.lua` 的 `trace_osd()` 拆成两半**：
+
+| 行为 | 以前 | 现在 |
+|---|---|---|
+| 写日志（`msg.info("[flow] …")`） | 只在开关打开时 | **永远** |
+| 显示到屏幕（`show_message`） | 只在开关打开时 | 只在开关打开时 |
+
+`msg.info` **不会显示在屏幕上**（只有 `show_message` 才会），所以用户
+什么都感觉不到，但导出的日志天然带上了 ①~⑦ 每一步。一行一个节点，量很小。
+
+顺带把几条「沉默的失败」提到 warn 级（这些以前只在 debug/verbose，等于没记）：
+
+| 位置 | 以前 | 现在 |
+|---|---|---|
+| `menu.lua` `get_animes` 单服务器失败 | `msg.debug` | `msg.warn` |
+| `dandanplay.lua` 搜索番剧失败 | `msg.debug` | `msg.warn` |
+| `dandanplay.lua` 匹配番剧失败 | `msg.debug` | `msg.warn` |
+| `dandanplay.lua` 获取弹幕失败 | `msg.debug` | `msg.warn` |
+| `parse.lua` `该集弹幕内容为空，结束加载` | `msg.verbose` | `msg.warn` |
+| `parse.lua` `弹幕内容为空，无法保存` | `msg.verbose` | `msg.warn` |
+| `dandanplay.lua` / `extra.lua` 各类「无结果」 | `msg.verbose` | `msg.info` |
+| `dandanplay.lua` 候选相似度 | `msg.debug` | `msg.info` |
+
+`dandanplay.lua` 本来就有不少 info 级日志，所以这轮之后
+「搜索 → 选番剧 → 选集 → 拉弹幕」每一步都会在日志里留痕。
+
+### 验证
+
+`trace_osd()` 用桩件驱动，8 项全过：
+
+```
+=== 开关关闭时（默认）===
+  ok   仍写日志
+  ok   不上屏
+=== 开关打开时 ===
+  ok   写日志
+  ok   上屏
+=== 边界 ===
+  ok   无 varargs 不炸
+  ok   格式串参数不足不抛错
+  ok   options 为 nil 不抛错
+  ok   options 为 nil 时不上屏
+通过 8，失败 0
+```
+
+### 备注
+
+- `danmaku_verbose_osd` 的语义变了：现在只管「要不要上屏」，不再管「要不要记」。
+  conf 里的注释已同步。
+- 这次**没有定位到日志里流程中断的具体原因** —— 因为这份日志里本来就没有
+  足够信息，任何结论都会是猜的。下一份日志（用新代码跑）才能定论。
+
+---
+
 ## [0.8.3] - 2026-10-05
 
 修掉日志 ④ 暴露的两个问题：**自动选择会挑中特番**，以及**连按按钮会自我打断**。

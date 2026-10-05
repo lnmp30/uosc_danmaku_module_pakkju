@@ -1110,3 +1110,42 @@ HTTP 请求失败：Calling failed. Exit code: -2
 `exit -3` 是沙箱限制（mpv 的 subprocess 带管道捕获被拦），不是真实网络错误。
 ⑤⑥ 需要 HTTP 成功才能走到，沙箱里覆盖不到 —— ⑤ 的挑选逻辑另有单测覆盖
 （见 §17 验证）。
+
+### 修正：日志部分不再受开关控制（0.8.4）
+
+上面那套设计有个致命前提：**得先让用户改配置**。但排查问题时最需要的恰恰是
+「什么都不用配就能拿到线索」。第二份安卓日志证明了这一点。
+
+那份日志（`mpvplayer_logs (5).txt`）里 `uosc_danmaku` 总共 9 行，
+全是 `一键搜索：xxx` —— 一次完整流程只留下「按了按钮」这一行。判据：
+
+| 观察 | 说明 |
+|---|---|
+| `已解析 N 条弹幕` 一次都没有 | 这行本来就是 info 级；缺席 = 全程没加载到任何弹幕 |
+| `curl` / `Subprocess` / `Exit code` 各 0 次 | 也不能说明请求成功 —— 它们本来就不在默认级别 |
+| danmaku 相关 error/warn 0 次 | 同上，失败只记在 debug |
+
+所以把 `trace_osd()` 拆成两半：
+
+```lua
+function trace_osd(fmt, ...)
+    local text = ...                      -- 格式化（pcall 保护）
+    msg.info("[flow] " .. text)           -- 永远写日志
+    if options and options.danmaku_verbose_osd
+       and type(show_message) == 'function' then
+        pcall(show_message, text, 6)      -- 只有开关打开才上屏
+    end
+end
+```
+
+关键依据：**`msg.info` 不会显示在屏幕上**，只有 `show_message` 才会。
+所以「永远写日志」对用户是完全无感的，但导出的日志天然带上 ①~⑦。
+
+同时把几条「沉默的失败」提到 warn（以前只在 debug/verbose，等于没记）：
+`get_animes` 单服务器失败、`dandanplay.lua` 的搜索/匹配/取弹幕失败、
+`parse.lua` 的两条「内容为空」。各类「无结果」提到 info。
+
+`danmaku_verbose_osd` 的语义因此变成**只管上屏，不管记录**，conf 注释已同步。
+
+单测（桩件驱动 `trace_osd`，8 项）：开关关 → 写日志不上屏；开关开 → 两者都做；
+无 varargs / 格式串参数不足 / `options` 为 nil 三种边界都不抛错。

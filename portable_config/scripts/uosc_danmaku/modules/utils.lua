@@ -124,20 +124,30 @@ function http_error_hint(err)
     return head or '无详细信息'
 end
 
--- 流程跟踪：把关键节点同时写日志和 OSD。
---! 为什么需要：安卓前端（如 mpvex）导出的日志只保留 info 及以上，
---! 脚本的 msg.verbose / msg.debug 全被丢掉，而搜索流程里的失败恰恰只在
---! debug 级记录 —— 结果就是「按下按钮后日志里什么都没有」，无从排查。
---! 打开 danmaku_verbose_osd 后直接把每一步摆到屏幕上。
+-- 流程跟踪：把关键节点写到日志；danmaku_verbose_osd 打开时同时摆到屏幕上。
+--
+--! 【为什么日志部分不再受开关控制】
+--! 实测（安卓 mpvex 导出的日志）：一次完整的「一键搜索」流程，日志里只留下
+--! 一行「一键搜索：xxx」。原因是流程里其余节点要么在 debug 级、要么被
+--! danmaku_verbose_osd 挡着，而 mpv 脚本默认只输出 info 及以上 ——
+--! 等于拿到的日志永远是「按了按钮，然后没有然后」，无从排查。
+--!
+--! 但把每一步都摆到屏幕上（原设计）也不行：平时会一直刷屏。
+--! 所以拆开：msg.info 永远写（屏幕上完全看不见，只进日志，一行一个节点，
+--! 量很小），show_message 才受 danmaku_verbose_osd 控制。
+--! 这样用户什么都不用配，导出的日志本身就是可诊断的。
 function trace_osd(fmt, ...)
-    if not (options and options.danmaku_verbose_osd) then return end
     local text = fmt
     if select('#', ...) > 0 then
         local ok, formatted = pcall(string.format, fmt, ...)
         if ok then text = formatted end
     end
-    msg.info("[trace] " .. text)
-    if type(show_message) == 'function' then
+
+    -- 永远写日志：msg.info 不会显示在屏幕上，只进日志文件
+    msg.info("[flow] " .. text)
+
+    -- 只有显式打开时才上屏
+    if options and options.danmaku_verbose_osd and type(show_message) == 'function' then
         pcall(show_message, text, 6)
     end
 end
