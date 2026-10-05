@@ -524,6 +524,7 @@ function fetch_danmaku(episodeId, from_menu, api_server)
     local url = api_server .. "/api/v2/comment/" .. episodeId .. "?withRelated=true&chConvert=0"
     show_message("弹幕加载中...", 30)
     msg.verbose("尝试获取弹幕：" .. url)
+    trace_osd("⑦ 拉取弹幕：%s", url)
     local args = make_danmaku_request_args("GET", url)
 
     if args == nil then

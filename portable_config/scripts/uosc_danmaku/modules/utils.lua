@@ -1,4 +1,8 @@
 local utils = require("mp.utils")
+--! 必须用 local：其它模块里的 msg 都是 local，这个文件以前只用 mp.msg，
+--! 所以 msg 从来不是全局。trace_osd 里直接写 msg.info 会报
+--! 「attempt to index global 'msg' (a nil value)」。
+local msg = require("mp.msg")
 local unpack = unpack or table.unpack
 
 -- from http://lua-users.org/wiki/LuaUnicode
@@ -118,6 +122,24 @@ function http_error_hint(err)
     end
 
     return head or '无详细信息'
+end
+
+-- 流程跟踪：把关键节点同时写日志和 OSD。
+--! 为什么需要：安卓前端（如 mpvex）导出的日志只保留 info 及以上，
+--! 脚本的 msg.verbose / msg.debug 全被丢掉，而搜索流程里的失败恰恰只在
+--! debug 级记录 —— 结果就是「按下按钮后日志里什么都没有」，无从排查。
+--! 打开 danmaku_verbose_osd 后直接把每一步摆到屏幕上。
+function trace_osd(fmt, ...)
+    if not (options and options.danmaku_verbose_osd) then return end
+    local text = fmt
+    if select('#', ...) > 0 then
+        local ok, formatted = pcall(string.format, fmt, ...)
+        if ok then text = formatted end
+    end
+    msg.info("[trace] " .. text)
+    if type(show_message) == 'function' then
+        pcall(show_message, text, 6)
+    end
 end
 
 function get_str_width(text, font_size)

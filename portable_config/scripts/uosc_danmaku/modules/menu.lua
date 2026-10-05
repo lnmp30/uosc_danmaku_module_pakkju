@@ -107,6 +107,7 @@ end
 local function run_menu_item(item, why)
     msg.info(string.format("自动选择：%s（%s）", tostring(item.title), tostring(why)))
     show_message("自动匹配：" .. tostring(item.title), 3)
+    trace_osd("⑤ 选中：%s（%s）", tostring(item.title), tostring(why))
 
     if input_loaded then input.terminate() end
     if uosc_available then
@@ -187,6 +188,15 @@ local function make_handle_response(ctx)
             end
             if request_cancelled then return end
 
+            trace_osd("④ 合计 %d 条搜索结果", #final_items)
+
+            -- 一条都没搜到时必须让用户看见：原来这里只是静默地弹一个空列表
+            if #final_items == 0 then
+                local reason = ctx.last_error and ("最后错误：" .. http_error_hint(ctx.last_error)) or "服务器没有返回匹配项"
+                show_message("搜索无结果（" .. reason .. "）", 6)
+                msg.warn("搜索无结果：" .. tostring(ctx.last_error))
+            end
+
             -- 自动选择模式：不弹菜单，直接挑一条最像的
             if options.danmaku_auto_select then
                 local best, why = pick_auto_item(final_items)
@@ -212,6 +222,9 @@ local function make_handle_response(ctx)
         end
 
         if err then
+            -- 记下最后一个错误，全部服务器都失败时汇总报给用户
+            ctx.last_error = err
+            trace_osd("③ %s 失败：%s", server, http_error_hint(err))
             msg.debug(("search anime failed for %s: %s"):format(server, tostring(err)))
             ctx.remaining.n = math.max(0, ctx.remaining.n - 1)
             if ctx.remaining.n == 0 then pcall(do_final_update) end
@@ -219,10 +232,13 @@ local function make_handle_response(ctx)
         end
         local data = utils.parse_json(out)
         if not data or not data.animes then
+            ctx.last_error = ctx.last_error or "返回内容为空"
+            trace_osd("③ %s 没有返回结果", server)
             ctx.remaining.n = math.max(0, ctx.remaining.n - 1)
             if ctx.remaining.n == 0 then pcall(do_final_update) end
             return
         end
+        trace_osd("③ %s 返回 %d 条", server, #data.animes)
         for _, anime in ipairs(data.animes) do
             local key = anime.bangumiId or (anime.animeTitle and anime.animeTitle:gsub("%s+", " ") or nil)
             if key and not ctx.seen[key] then
@@ -360,6 +376,7 @@ function get_animes(query, filter_note)
     end
 
     msg.verbose("尝试获取番剧数据，servers: " .. table.concat(servers, ", ") .. " query: " .. query)
+    trace_osd("② 搜索「%s」，%d 个服务器", query, #servers)
 
     local build_args = make_build_args(encoded_query)
 
@@ -369,6 +386,7 @@ function get_animes(query, filter_note)
         seen = seen,
         first_opened = { val = first_opened },
         remaining = { n = remaining },
+        last_error = nil,
         message = message,
         total_servers = total_servers,
         menu_type = menu_type,
@@ -515,6 +533,8 @@ function get_episodes(animeTitle, bangumiId, api_server)
                 latest_menu_anime = utils.format_json(menu_table)
             end
         end
+
+        trace_osd("⑥ 剧集列表 %d 条", #items)
 
         -- 自动选择模式：按文件名推断的集数自动选集，不弹菜单
         if options.danmaku_auto_select then
@@ -1593,33 +1613,43 @@ end)
 -- 安卓端可以把它绑到自定义按钮上；桌面端可以绑键，见
 -- uosc_danmaku.conf 里的 danmaku_quick_search_key。
 mp.register_script_message("danmaku-quick-search", function(override)
-    local query = override
-    local from_filename = false
+    -- 整个处理包一层 pcall：万一 show_message 或后续哪一步抛错，
+    -- 至少能把错误显示在屏幕上，而不是「按下按钮后毫无反应」
+    local ok, err = pcall(function()
+        local query = override
+        local from_filename = false
 
-    -- 没给关键词就从文件名解析
-    if type(query) ~= "string" or query:match("^%s*$") then
-        query = parse_title()
-        from_filename = true
+        -- 没给关键词就从文件名解析
+        if type(query) ~= "string" or query:match("^%s*$") then
+            query = parse_title()
+            from_filename = true
+        end
+
+        if type(query) ~= "string" or query:match("^%s*$") then
+            show_message("无法从文件名解析出番剧名，请改用搜索菜单手动输入", 3)
+            msg.warn("danmaku-quick-search: 没有可用的搜索关键词")
+            return
+        end
+
+        if from_filename then
+            -- search-anime-event 约定用 "|" 分隔「名称|类型」、用 "@" 分隔过滤词。
+            -- 文件名里出现这两个字符会被误解，替换掉。
+            -- 手动传入的关键词不动，留出使用高级语法的余地。
+            query = query:gsub("[|@]", " ")
+        end
+        query = query:gsub("%s+", " "):gsub("^%s*(.-)%s*$", "%1")
+
+        msg.info("一键搜索：" .. query)
+        trace_osd("① 关键词：%s", query)
+        show_message("搜索弹幕：" .. query, 2)
+
+        mp.commandv("script-message-to", mp.get_script_name(), "search-anime-event", query)
+    end)
+
+    if not ok then
+        show_message("一键搜索出错：" .. brief_error(err, 40), 8)
+        msg.error("danmaku-quick-search 出错：" .. tostring(err))
     end
-
-    if type(query) ~= "string" or query:match("^%s*$") then
-        show_message("无法从文件名解析出番剧名，请改用搜索菜单手动输入", 3)
-        msg.warn("danmaku-quick-search: 没有可用的搜索关键词")
-        return
-    end
-
-    if from_filename then
-        -- search-anime-event 约定用 "|" 分隔「名称|类型」、用 "@" 分隔过滤词。
-        -- 文件名里出现这两个字符会被误解，替换掉。
-        -- 手动传入的关键词不动，留出使用高级语法的余地。
-        query = query:gsub("[|@]", " ")
-    end
-    query = query:gsub("%s+", " "):gsub("^%s*(.-)%s*$", "%1")
-
-    msg.info("一键搜索：" .. query)
-    show_message("搜索弹幕：" .. query, 2)
-
-    mp.commandv("script-message-to", mp.get_script_name(), "search-anime-event", query)
 end)
 
 mp.register_script_message("search-episodes-event", function(animeTitle, bangumiId, api_server)

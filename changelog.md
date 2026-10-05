@@ -26,6 +26,85 @@
 
 ---
 
+## [0.8.2] - 2026-10-05
+
+排查安卓端的「按下按钮后毫无反应」。加了一套 OSD 流程跟踪，顺手修掉一个真 bug。
+
+### 背景
+
+用户提供了 mpvex（安卓）导出的日志，里面 `一键搜索：xxx` 出现了 7 次，
+**之后什么都没有** —— 没有请求、没有错误、没有结果。
+
+逐条比对后确认原因：**该 app 的日志导出只保留 info 及以上**
+（整个 App Logs 段里 `uosc_danmaku` 只有那 7 条 `msg.info`，
+连 `osd/libass`、`sub/ass` 的内部日志都在，唯独没有脚本的 verbose/debug）。
+而搜索流程里的失败恰恰只记在 `debug` 级；「一条都没搜到」时更是**完全静默**，
+只弹一个空列表。等于在黑盒里排查。
+
+### 修复
+
+- **`modules/utils.lua` 的 `msg` 未定义**（真 bug）。
+  这个文件以前只用 `mp.msg`，从来没 require 过 `msg`；
+  其它模块里的 `msg` 都是 `local`，所以它不是全局。
+  新加的 `trace_osd` 里写了 `msg.info(...)` →
+  `attempt to index global 'msg' (a nil value)`。
+  已补 `local msg = require("mp.msg")`。
+
+  > 这个 bug 是被本版本新加的 `pcall` 包装当场抓出来的 ——
+  > 原本它只会让「一键搜索」静默失败，和用户遇到的现象一模一样。
+
+### 新增
+
+- **`danmaku_verbose_osd` 选项**（默认 `no`）与 `trace_osd()`：
+  把整条链路打到 OSD 上，停在哪一号就是哪一步出问题。
+
+  ```
+  ① 关键词：孤独摇滚
+  ② 搜索「孤独摇滚」，1 个服务器
+  ③ https://... 失败：exit 7 连不上服务器：Failed to connect
+  ④ 合计 0 条搜索结果
+  ⑤ 选中：孤独摇滚！  （评分 135.0）
+  ⑥ 剧集列表 13 条
+  ⑦ 拉取弹幕：https://.../api/v2/comment/12345?withRelated=true&chConvert=0
+  ```
+
+- **搜索失败/无结果现在会显示**：`get_animes` 原来只在 `debug` 级记录每个
+  服务器的失败，全部失败时也不提示。现在会记下最后一个错误并在 OSD 上汇总：
+  `搜索无结果（最后错误：exit 7 连不上服务器：...）`。
+
+- **`danmaku-quick-search` 整个处理包了 `pcall`**，出错时显示
+  `一键搜索出错：<原因>` 并记 error 日志，不再静默。
+
+### 验证
+
+隔离 `MPV_HOME` + 合成视频 + 只负责发消息的触发脚本：
+
+```
+一键搜索：孤独摇滚
+[trace] ① 关键词：孤独摇滚
+[trace] ② 搜索「孤独摇滚」，1 个服务器
+[trace] ③ https://danmaku-api.152468.xyz 失败：exit -3 子进程没起来（可能缺 curl）
+[trace] ④ 合计 0 条搜索结果
+[w] 搜索无结果：Calling failed. Exit code: -3 Error:
+```
+
+以及直接发 `load-danmaku` 触发拉取分支：
+
+```
+[trace] ⑦ 拉取弹幕：http://127.0.0.1:8765/api/v2/comment/1004?withRelated=true&chConvert=0
+[e] HTTP 请求失败：Calling failed. Exit code: -3 Error:
+```
+
+`exit -3` 是沙箱的限制（mpv 的 subprocess 带管道捕获被拦），
+不是真实网络错误；⑤⑥ 需要 HTTP 成功才能走到，沙箱里无法覆盖。
+
+### 备注
+
+- 默认关闭 `danmaku_verbose_osd`，不影响正常使用。
+- 除上面那个 `msg` bug 外，没有改动任何请求逻辑。
+
+---
+
 ## [0.8.1] - 2026-10-05
 
 把网络失败的真实原因显示到 OSD 上。安卓上没有方便的日志入口，

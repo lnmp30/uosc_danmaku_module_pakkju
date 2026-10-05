@@ -971,3 +971,72 @@ TESTPICK-EPISODE => 第4话  (集数精确匹配第 4 集)     ← S01E04 正确
 
 日志里没有 `attempt to call a nil value`，证明 `http_error_hint` 这个全局
 在 `menu.lua` / `dandanplay.lua` 里可见（`utils.lua` 在 `main.lua` 里先加载）。
+
+---
+
+## 19. OSD 流程跟踪（`danmaku_verbose_osd`）
+
+### 问题：安卓上脚本日志根本拿不到
+
+用户提供了 mpvex（安卓）导出的日志，`一键搜索：xxx` 出现 7 次，
+之后什么都没有。逐条比对后确认：
+
+- 该 app 的日志导出**只保留 info 及以上**。整个 App Logs 段里
+  `uosc_danmaku` 只有那 7 条 `msg.info`；而 `osd/libass`、`sub/ass`
+  这些 mpv 内部模块的日志都在，唯独没有脚本的 verbose/debug。
+- 搜索流程里的失败恰恰只记在 `debug` 级（`search anime failed for ...`）。
+- 「一条都没搜到」时更是**完全静默**，只弹一个空列表。
+
+等于在纯黑盒里排查。
+
+### 做法
+
+- `modules/utils.lua` 新增 `trace_osd(fmt, ...)`：同时写 `msg.info` 和 OSD，
+  由 `danmaku_verbose_osd` 门控（默认关）。
+- 在 7 个关键节点埋点，编号即顺序：
+
+  | 编号 | 位置 |
+  |---|---|
+  | ① 关键词 | `danmaku-quick-search` 处理函数 |
+  | ② 搜索 / 服务器数 | `get_animes` 开头 |
+  | ③ 每个服务器的结果或失败 | `make_handle_response` |
+  | ④ 合计结果数 | `do_final_update` |
+  | ⑤ 选中项 | `run_menu_item` |
+  | ⑥ 剧集列表条数 | `get_episodes` 末尾 |
+  | ⑦ 拉取弹幕的 URL | `fetch_danmaku` |
+
+- 另外两处改成**始终可见**（不依赖 `danmaku_verbose_osd`）：
+  - `do_final_update` 里结果为 0 时汇总最后一个错误并 `show_message`
+    （`ctx.last_error` 由 `make_handle_response` 记录）
+  - `danmaku-quick-search` 整个处理包 `pcall`，出错时显示并记 error
+
+### 顺带修掉一个真 bug
+
+`trace_osd` 里的 `msg.info(...)` 报 `attempt to index global 'msg' (a nil value)`：
+
+**`utils.lua` 从来没有 `require("mp.msg")`** —— 这个文件以前只用 `mp.msg`，
+而其它模块里的 `msg` 都是 `local`，所以它不是全局。
+
+补上 `local msg = require("mp.msg")` 即可。值得一提的是，**这个 bug 是被
+本版本新加的 `pcall` 包装当场抓出来的**：没有它，`danmaku-quick-search`
+只会静默失败 —— 和用户报的现象一模一样。
+
+### 验证
+
+```
+一键搜索：孤独摇滚
+[trace] ① 关键词：孤独摇滚
+[trace] ② 搜索「孤独摇滚」，1 个服务器
+[trace] ③ https://danmaku-api.152468.xyz 失败：exit -3 子进程没起来（可能缺 curl）
+[trace] ④ 合计 0 条搜索结果
+[w] 搜索无结果：Calling failed. Exit code: -3 Error:
+```
+
+```
+[trace] ⑦ 拉取弹幕：http://127.0.0.1:8765/api/v2/comment/1004?withRelated=true&chConvert=0
+[e] HTTP 请求失败：Calling failed. Exit code: -3 Error:
+```
+
+`exit -3` 是沙箱限制（mpv 的 subprocess 带管道捕获被拦），不是真实网络错误。
+⑤⑥ 需要 HTTP 成功才能走到，沙箱里覆盖不到 —— ⑤ 的挑选逻辑另有单测覆盖
+（见 §17 验证）。
