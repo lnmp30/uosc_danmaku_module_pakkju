@@ -152,6 +152,48 @@ function trace_osd(fmt, ...)
     end
 end
 
+-- 关键文件的指纹：用来确认设备上跑的到底是哪一版代码。
+--
+--! 为什么需要：实测吃过一次亏 —— 只更新了 utils.lua、没更新 menu.lua，
+--! 结果是「新的日志格式 + 旧的判定逻辑」混在一起，从现象上完全看不出来，
+--! 白白多排查了一轮。指纹会随文件内容变化，日志第一行就能对上号。
+--
+-- 用多项式滚动哈希（不依赖 bit 库，Lua 5.1 / LuaJIT 都能跑）。
+local function file_fingerprint(path)
+    local f = io.open(path, "rb")
+    if not f then return nil end
+    local data = f:read("*a")
+    f:close()
+    if not data then return nil end
+
+    local h = 5381
+    for i = 1, #data do
+        h = (h * 33 + data:byte(i)) % 4294967296
+    end
+    return string.format("%08x", h), #data
+end
+
+-- 返回 "文件数:总字节:合并哈希"，任何一个模块变了都会变
+function build_fingerprint(script_dir, files)
+    local parts, total, ok = {}, 0, 0
+    for _, name in ipairs(files) do
+        local hash, size = file_fingerprint(script_dir .. "/" .. name)
+        if hash then
+            parts[#parts + 1] = hash
+            total = total + size
+            ok = ok + 1
+        else
+            parts[#parts + 1] = "missing"
+        end
+    end
+    local combined = 5381
+    local joined = table.concat(parts, "")
+    for i = 1, #joined do
+        combined = (combined * 33 + joined:byte(i)) % 4294967296
+    end
+    return string.format("build %d/%d/%08x", ok, total, combined)
+end
+
 function get_str_width(text, font_size)
     local width = 0
     for i = 1, #text do

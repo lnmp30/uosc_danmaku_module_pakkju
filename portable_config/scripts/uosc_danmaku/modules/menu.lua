@@ -85,17 +85,65 @@ local function score_anime_item(ref, item)
     return score
 end
 
--- 判断一份列表是不是「剧集列表」：可选项里过半的 hint 是纯数字就是。
--- 番剧搜索结果的 hint 长这样：动漫 | 2022 | 来源：b 站 —— tonumber 得到 nil。
+-- 从一个 hint 里抠出集数。
+--
+--! 注意别拿它当「是不是剧集」的主判据：搜索结果的 hint 长这样
+--! 「动漫 | 2022 | 来源：b 站」，里面那个 2022 会被误当成集数。
+--! 主判据用 item_command_kind()（看 value 里的命令），这里只做兜底。
+--  所以额外要求：整串不超过 12 字节、数字不超过 3 位 —— 一集番剧不会超过 999。
+local function hint_episode_number(hint)
+    if type(hint) == "number" then return hint end
+    if type(hint) ~= "string" or #hint > 12 then return nil end
+    local digits = hint:match("%d+%.?%d*")
+    if not digits then return nil end
+    local whole = digits:match("^%d+")
+    if #whole > 3 then return nil end
+    return tonumber(digits)
+end
+
+-- 菜单项的「种类」直接从它的 value 命令数组里读，比猜 hint 可靠得多：
+--   搜索番剧（dandanplay） -> search-episodes-event
+--   搜索番剧（extra）      -> get-extra-event
+--   具体某一集             -> load-danmaku
+local function item_command_kind(it)
+    local v = it.value
+    if type(v) ~= "table" then return nil end
+    for _, arg in ipairs(v) do
+        if arg == "load-danmaku" then return "episode" end
+        if arg == "search-episodes-event" or arg == "get-extra-event" then return "anime" end
+    end
+    return nil
+end
+
+-- 判断一份列表是不是「剧集列表」。
+-- 先按 value 里的命令分类（可靠）；一条都认不出来时才退回 hint 猜测。
 local function looks_like_episode_list(items)
-    local total, numeric = 0, 0
+    local total, episodes, recognized = 0, 0, 0
     for _, it in ipairs(items) do
         if type(it.value) == "table" and it.selectable ~= false then
             total = total + 1
-            if tonumber(it.hint) then numeric = numeric + 1 end
+            local kind = item_command_kind(it)
+            if kind then
+                recognized = recognized + 1
+                if kind == "episode" then episodes = episodes + 1 end
+            end
         end
     end
-    return total > 0 and numeric * 2 > total
+    if total == 0 then return false end
+
+    -- 认出来一半以上就用命令判据，不猜
+    if recognized * 2 > total then
+        return episodes * 2 > total
+    end
+
+    -- 兜底：hint 能抠出集数的过半
+    local numeric = 0
+    for _, it in ipairs(items) do
+        if type(it.value) == "table" and it.selectable ~= false then
+            if hint_episode_number(it.hint) then numeric = numeric + 1 end
+        end
+    end
+    return numeric * 2 > total
 end
 
 -- 自动挑一条可选项。返回 item, 理由。
@@ -105,12 +153,21 @@ local function pick_auto_item(items)
     local filename = mp.get_property("filename/no-ext")
     local number = filename and get_episode_number(filename) or nil
 
-    if looks_like_episode_list(items) then
+    local is_episode_list = looks_like_episode_list(items)
+
+    -- 把「这份列表被当成了什么」记下来。判定错了会悄悄走去打分，
+    -- 挑出一条完全不相干的条目（实测挑中特番「S8 BOCCHI STATION」），
+    -- 而日志里只看得到「评分 77.2」，完全不知道为什么。
+    trace_osd("列表判定：%s（%d 条，文件名集数 %s）",
+        is_episode_list and "剧集列表 → 按集数匹配" or "搜索列表 → 按标题打分",
+        #items, number and tostring(number) or "无")
+
+    if is_episode_list then
         local first
         for _, it in ipairs(items) do
             if type(it.value) == "table" and it.selectable ~= false then
                 if not first then first = it end
-                if number and tonumber(it.hint) == number then
+                if number and hint_episode_number(it.hint) == number then
                     return it, string.format("集数精确匹配第 %d 集", number)
                 end
             end
@@ -123,14 +180,25 @@ local function pick_auto_item(items)
 
     local ref = parse_title()
     local best, best_score = nil, nil
+    local ranked = {}
     for _, it in ipairs(items) do
         if type(it.value) == "table" and it.selectable ~= false then
             local s = score_anime_item(ref, it)
+            ranked[#ranked + 1] = { title = tostring(it.title), score = s }
             if not best_score or s > best_score then
                 best, best_score = it, s
             end
         end
     end
+
+    -- 把前三名记下来：挑错了要能看出「为什么是它」，而不是只有一个分数
+    table.sort(ranked, function(a, b) return a.score > b.score end)
+    local top = {}
+    for i = 1, math.min(3, #ranked) do
+        top[#top + 1] = string.format("%s=%.1f", ranked[i].title, ranked[i].score)
+    end
+    trace_osd("打分参考词「%s」，前三：%s", tostring(ref), table.concat(top, " / "))
+
     return best, best_score and string.format("评分 %.1f", best_score) or nil
 end
 
@@ -299,6 +367,20 @@ local function make_handle_response(ctx)
             end
         end
 
+        -- 收尾：只跑一次，而且出错必须说话。
+        --! 原来三处调用点都写 `pcall(do_final_update)` —— 异常被静默吞掉，
+        --! 表现就是「日志停在 ④，然后什么都没有」，和网络失败长得一模一样。
+        local function finish()
+            if ctx.finished then return end
+            ctx.finished = true
+            local ok, err = pcall(do_final_update)
+            if not ok then
+                msg.error("搜索结果处理出错：" .. tostring(err))
+                trace_osd("! 收尾处理出错：%s", tostring(err))
+                show_message("搜索结果处理出错：" .. brief_error(err, 40), 8)
+            end
+        end
+
         if err then
             -- 记下最后一个错误，全部服务器都失败时汇总报给用户
             ctx.last_error = err
@@ -307,7 +389,7 @@ local function make_handle_response(ctx)
             -- 日志里也只剩一行「一键搜索：xxx」，完全无从判断
             msg.warn(("搜索番剧失败 %s: %s"):format(server, tostring(err)))
             ctx.remaining.n = math.max(0, ctx.remaining.n - 1)
-            if ctx.remaining.n == 0 then pcall(do_final_update) end
+            if ctx.remaining.n == 0 then finish() end
             return
         end
         local data = utils.parse_json(out)
@@ -315,7 +397,7 @@ local function make_handle_response(ctx)
             ctx.last_error = ctx.last_error or "返回内容为空"
             trace_osd("③ %s 没有返回结果", server)
             ctx.remaining.n = math.max(0, ctx.remaining.n - 1)
-            if ctx.remaining.n == 0 then pcall(do_final_update) end
+            if ctx.remaining.n == 0 then finish() end
             return
         end
         trace_osd("③ %s 返回 %d 条", server, #data.animes)
@@ -383,7 +465,7 @@ local function make_handle_response(ctx)
 
         ctx.remaining.n = math.max(0, ctx.remaining.n - 1)
         if ctx.remaining.n == 0 then
-            pcall(do_final_update)
+            finish()
         end
     end
 end

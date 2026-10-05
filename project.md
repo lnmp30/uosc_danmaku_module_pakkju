@@ -1183,6 +1183,79 @@ end
 
 `readme.md` / `uosc_danmaku.conf` / `options.lua` 三处的注释与默认值已同步。
 
+### 列表类型判定：别猜 hint（0.8.7）
+
+日志 7 里 43 集的剧集列表被判成了「搜索列表」(`自动选择：S8 BOCCHI STATION
+（评分 77.2）`)，于是没走集数匹配、挑中一条特番。根因是
+`hint = episode.episodeNumber` 不保证是数字，而旧判据是 `tonumber(it.hint)`。
+
+修的过程中先写错了一版，被自己的单测拦下：
+
+| 版本 | 判据 | 结果 |
+|---|---|---|
+| 原始 | `tonumber(it.hint)` | 真剧集列表判不出来（服务端返回非数字） |
+| 第一次修改 | 从 hint 抠数字 | **搜索列表被误判** —— `动漫 \| 2022 \| 来源：b 站` 里的 2022 被当成集数 |
+| 最终 | `item_command_kind(it)` | 可靠：看 value 里的命令名 |
+
+`item_command_kind()` 直接读菜单项的 `value` 命令数组，这是**语义**而不是猜测：
+
+| value 里包含 | 含义 |
+|---|---|
+| `load-danmaku` | 某一集 |
+| `search-episodes-event` | dandanplay 搜索到的番剧 |
+| `get-extra-event` | extra 源搜索到的番剧 |
+
+认出一半以上就用它判定；一条都认不出时才退回 hint 猜测，并额外限制
+「整串 ≤ 12 字节、数字 ≤ 3 位」（`hint_episode_number`），避免年份再次混进来。
+
+### 收尾只跑一次 + 异常必须说话（0.8.7）
+
+`make_handle_response` 里三处调用点原本是：
+
+```lua
+ctx.remaining.n = math.max(0, ctx.remaining.n - 1)
+if ctx.remaining.n == 0 then pcall(do_final_update) end
+```
+
+`math.max(0, ...)` 把 n 的下限卡在 0，而判据是「== 0」——
+**多来一次回调，收尾就会再执行一遍**。日志 7 里两次自动选择标题和评分完全一样
+（同一份 `final_items`）、间隔正好 100ms（`add_timeout(0.1)`），就是这个。
+实测对照：去掉守卫 2 次，加守卫 1 次。
+
+同时 `pcall` 是裸的，异常被静默吞掉 —— 现象与网络失败无法区分。现在统一走：
+
+```lua
+local function finish()
+    if ctx.finished then return end
+    ctx.finished = true
+    local ok, err = pcall(do_final_update)
+    if not ok then
+        msg.error("搜索结果处理出错：" .. tostring(err))
+        trace_osd("! 收尾处理出错：%s", tostring(err))
+        show_message("搜索结果处理出错：" .. brief_error(err, 40), 8)
+    end
+end
+```
+
+> ⚠️ 第一版把守卫同时写进了 `finish()` 和 `do_final_update()`，
+> 于是 `finish()` 先置位、`do_final_update()` 一进去就 return ——
+> 自动选择会被彻底废掉。同样是单测当场发现的（trace 只到 ③）。
+> 守卫只能有一处。
+
+### 构建指纹（0.8.7）
+
+吃过一次亏：设备上只更新了 `utils.lua` 没更新 `menu.lua`，新旧混着跑，
+从现象上完全看不出来（日志 7 的 `⑤ 选中` 是旧编号，说明判定逻辑是旧的）。
+现在 `main.lua` 启动时打印一次：
+
+```
+uosc_danmaku+pakku 2.2.0 build 6/203032/b802e38f
+```
+
+`build_fingerprint()`（`utils.lua`）对 6 个关键文件做多项式滚动哈希
+（不依赖 bit 库，Lua 5.1 / LuaJIT 通用），格式为
+`build 识别到的文件数/总字节/合并哈希`。**排查日志第一步就看这行。**
+
 ### 端到端验证（0.8.5）
 
 前几版受限于「mpv 的 subprocess 走管道捕获被沙箱拦」，只能验到 ③ 失败。

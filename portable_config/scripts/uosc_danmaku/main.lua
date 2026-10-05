@@ -29,6 +29,21 @@ require("sites/mgtv")
 require("sites/tencentvideo")
 require("sites/youku")
 
+-- 启动时打印一次构建指纹，用来确认设备上跑的到底是哪一版代码。
+-- 吃亏过：只更新了 utils.lua 没更新 menu.lua，新旧混着跑，从现象看不出来。
+-- 排查日志时先看这一行，对不上就是文件没拷全。
+do
+    local fingerprint = build_fingerprint(mp.get_script_directory(), {
+        "main.lua",
+        "modules/menu.lua",
+        "modules/utils.lua",
+        "modules/options.lua",
+        "modules/parse.lua",
+        "apis/dandanplay.lua",
+    })
+    msg.info(string.format("uosc_danmaku+pakku %s %s", VERSION, fingerprint))
+end
+
 DANMAKU_PATH = os.getenv("TEMP") or "/tmp/"
 HISTORY_PATH = mp.command_native({"expand-path", options.history_path})
 PID = utils.getpid()
