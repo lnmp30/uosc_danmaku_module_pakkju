@@ -1,0 +1,37 @@
+# ===================================================================
+# 忽略规则
+# 本仓库只跟踪 pakku 合并模块本身、它的配置和文档；
+# mpv 本体、第三方脚本、大体积运行时资源都不入库。
+# ===================================================================
+
+# ---- mpv 播放器本体与二进制工具 ----
+/mpv.exe
+/mpv.com
+/luajit.exe
+/lua51.dll
+/alass.exe
+
+# ---- 第三方检出（算法参考实现、lua socket 库）----
+/pakku.js-master/
+/lua/
+
+# ---- CC GUI 会话数据 ----
+/.ccgui/
+
+# ---- mpv 便携配置：只保留 uosc_danmaku 与它的 conf，其余全部忽略 ----
+/portable_config/*
+!/portable_config/scripts/
+/portable_config/scripts/*
+!/portable_config/scripts/uosc_danmaku/
+!/portable_config/script-opts/
+/portable_config/script-opts/*
+!/portable_config/script-opts/uosc_danmaku.conf
+
+# ---- 开发调试残留 ----
+/_e2e*
+/_e2ecfg/
+/_test*.lua
+/_bench*.lua
+/_dbg*.lua
+/_m*.lua
+/_*.txt

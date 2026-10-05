@@ -1,0 +1,10 @@
+# 统一换行符：仓库内与检出后都用 LF
+# mpv 读 script-opts/*.conf 时要求 Unix 换行，混用 CRLF 会解析失败
+* text=auto eol=lf
+
+*.lua   text eol=lf
+*.conf  text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.xml   text eol=lf
+*.txt   text eol=lf
