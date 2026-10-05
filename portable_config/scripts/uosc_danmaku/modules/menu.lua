@@ -150,7 +150,8 @@ end
 -- 自动挑一条可选项。返回 item, 理由。
 --   剧集列表：按文件名推断出的集数做精确匹配，匹配不上取第一集
 --   搜索列表：按「标题相似度 + 类型关键词」打分取最高
-local function pick_auto_item(items)
+local function pick_auto_item(items, origin)
+    origin = origin or "?"
     -- 集数从 parse_title() 的后两个返回值拿，而不是自己再解析一遍
     -- filename/no-ext。
     --
@@ -170,7 +171,7 @@ local function pick_auto_item(items)
     -- 把「这份列表被当成了什么」记下来。判定错了会悄悄走去打分，
     -- 挑出一条完全不相干的条目（实测挑中特番「S8 BOCCHI STATION」），
     -- 而日志里只看得到「评分 77.2」，完全不知道为什么。
-    trace_osd("列表判定：%s（%d 条，文件名集数 %s）",
+    trace_osd("列表判定[%s]：%s（%d 条，文件名集数 %s）", origin,
         is_episode_list and "剧集列表 → 按集数匹配" or "搜索列表 → 按标题打分",
         #items, number and tostring(number) or "无")
 
@@ -305,12 +306,31 @@ local function auto_select_is_duplicate(key)
     return false
 end
 
+-- 去重的 key：**以「最终要执行的那条命令」为准**，而不是「阶段 + 上下文 + 标题」。
+--
+--! 为什么改：原来 key 里带 stage 和 context，而同一个番剧从不同入口进来时
+--! 两者都不一样 —— 「搜索」入口的 context 是搜索词，「列表」入口的 context
+--! 是文件名。于是同一部番剧被当成两次不同的选择，去重形同虚设。
+--! 实测（安卓）：一次按键选出两次「孤独摇滚！」，各排一个
+--! search-episodes-event，第二个把第一个的 curl 掐了（Exit code: -2）。
+--! 换成命令 key 之后，不管从哪个入口来，只要是同一个目标就会被拦住。
+local function auto_select_target_key(item)
+    local v = item and item.value
+    if type(v) ~= "table" or #v == 0 then return nil end
+    local parts = {}
+    for i = 1, #v do
+        parts[i] = tostring(v[i])   -- value 里可能有 table，tostring 兜住
+    end
+    return "cmd\0" .. table.concat(parts, "\0")
+end
+
 -- 三个入口共用的去重闸门：重复触发时打日志并返回 true，调用方直接 return。
 local function auto_select_should_skip(stage, context, item)
-    local key = stage .. "\0" .. tostring(context) .. "\0" .. tostring(item.title)
+    local key = auto_select_target_key(item)
+        or (stage .. "\0" .. tostring(context) .. "\0" .. tostring(item.title))
     if not auto_select_is_duplicate(key) then return false end
     msg.info(string.format("自动选择：忽略重复触发（%s / %s）", stage, tostring(item.title)))
-    trace_osd("⑥ 忽略重复的自动选择：%s", tostring(item.title))
+    trace_osd("⑥ 忽略重复的自动选择：%s（来自 %s）", tostring(item.title), stage)
     return true
 end
 
@@ -389,7 +409,7 @@ local function make_handle_response(ctx)
 
             -- 自动选择模式：不弹菜单，直接挑一条最像的
             if options.danmaku_auto_select then
-                local best, why = pick_auto_item(final_items)
+                local best, why = pick_auto_item(final_items, "搜索")
                 if best then
                     if auto_select_should_skip("搜索", ctx.query, best) then return end
                     run_menu_item(best, why or "自动选择")
@@ -767,7 +787,7 @@ function get_episodes(animeTitle, bangumiId, api_server)
 
         -- 自动选择模式：按文件名推断的集数自动选集，不弹菜单
         if options.danmaku_auto_select then
-            local item, why = pick_auto_item(items)
+            local item, why = pick_auto_item(items, "剧集")
             if item then
                 if auto_select_should_skip("剧集", mp.get_property("filename"), item) then return end
                 run_menu_item(item, why or "自动选择")
@@ -844,7 +864,7 @@ function open_menu_select(menu_items, is_time)
     -- （包括 apis/extra.lua 的搜索结果），在这里拦一刀能一次覆盖全部路径。
     -- is_time 是弹幕延迟/筛选菜单，不做自动选择。
     if options.danmaku_auto_select and not is_time then
-        local item, why = pick_auto_item(menu_items)
+        local item, why = pick_auto_item(menu_items, "列表")
         if item then
             if auto_select_should_skip("列表", mp.get_property("filename"), item) then return end
             run_menu_item(item, why or "自动选择")

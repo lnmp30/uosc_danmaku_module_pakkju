@@ -1317,6 +1317,39 @@ luajit test/auto_select_test.lua     # 通过 40，失败 0
 
 已验证测试本身不是摆设：把「只认剧集项」临时退回旧行为，用例立刻变红。
 
+### 去重 key 必须按「目标命令」，不能带阶段（0.8.9）
+
+0.8.8 之后整条链路终于跑通（4626 条弹幕加载成功），但仍观察到一次重复选择。
+排查时发现去重的 key 设计有漏洞：
+
+```lua
+-- 旧：key = stage .. context .. title
+-- 「搜索」入口 context = 搜索词、「列表」入口 context = 文件名
+```
+
+同一部番剧从不同入口进来时 `stage` 和 `context` **都不一样**，
+于是被当成两次不同的选择 —— 日志里 `忽略重复触发` 是 0 次，正是这个原因。
+（这也解释了为什么 0.8.3 加的去重一直没能拦住重复。）
+
+现在 key 直接由 `item.value`（最终要执行的那条命令数组）拼出：
+
+```lua
+local function auto_select_target_key(item)
+    local v = item and item.value
+    if type(v) ~= "table" or #v == 0 then return nil end
+    local parts = {}
+    for i = 1, #v do parts[i] = tostring(v[i]) end   -- value 里可能有 table
+    return "cmd\0" .. table.concat(parts, "\0")
+end
+```
+
+语义变成「同一个目标 5 秒内只触发一次」，与入口、上下文无关。
+拿不到命令数组时（极少）才退回 `stage + context + title`。
+
+同时给 `列表判定` 加了入口标记 `[搜索]` / `[剧集]` / `[列表]`，
+下次再有重复选择能直接看出是谁调用的 —— 这次是靠 key 修复盖住的，
+入口本身没能确认。
+
 ### 端到端验证（0.8.5）
 
 前几版受限于「mpv 的 subprocess 走管道捕获被沙箱拦」，只能验到 ③ 失败。

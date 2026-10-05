@@ -214,6 +214,25 @@ state.time = 1010
 check("窗口外放行", should_skip("搜索", "Q", animeItem("A", 2022)), false)
 
 print()
+print("== 去重以「目标命令」为准：换入口但同一目标也要拦 ==")
+-- 实测踩过：key 里带 stage+context 时，同一部番剧从「搜索」和「列表」两个入口
+-- 进来会被当成两次不同的选择，于是各排一个请求、第二个把第一个掐掉。
+state.time = 2000
+check("首个入口放行", should_skip("搜索", "BOCCHI THE ROCK", animeItem("X", 2022)), false)
+state.time = 2000.1
+check("换入口（列表）同一目标要拦截", should_skip("列表", "某个文件名", animeItem("X", 2022)), true)
+state.time = 2000.2
+check("换入口（剧集）同一目标同样拦截", should_skip("剧集", "某个文件名", animeItem("X", 2022)), true)
+state.time = 2000.3
+check("不同目标放行", should_skip("搜索", "BOCCHI THE ROCK", animeItem("Y", 2022)), false)
+state.time = 2000.4
+check("剧集项按命令区分：第 1 话放行", should_skip("剧集", "f", epItem(1)), false)
+state.time = 2000.5
+check("同一集从别的入口进来要拦截", should_skip("搜索", "别的搜索词", epItem(1)), true)
+state.time = 2000.6
+check("第 2 话放行", should_skip("剧集", "f", epItem(2)), false)
+
+print()
 print("== 收尾只跑一次 + 异常不再静默 ==")
 local function newCtx(n)
     local order = {}; for i = 1, n do order[i] = "s" .. i end
