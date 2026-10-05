@@ -167,6 +167,8 @@ mpv.exe --msg-level=uosc_danmaku=v "你的视频.mkv"
 ├── changelog.md               版本历史
 ├── THIRD-PARTY.md             第三方组件与许可证说明
 ├── LICENSE                    GPL-3.0 全文
+├── test/
+│   └── auto_select_test.lua   自动选择的单测（luajit test/auto_select_test.lua）
 ├── testdata/                  回归测试用的弹幕文件（3 集，共 20086 条）
 │   └── [DMG&VCB-Studio] BOCCHI THE ROCK! [NN]....xml
 └── portable_config/
@@ -179,6 +181,14 @@ mpv.exe --msg-level=uosc_danmaku=v "你的视频.mkv"
 
 `testdata/` 里的弹幕文件可以直接拿来验证：把文件名改成和你的视频同名、
 放在视频同目录，uosc_danmaku 就会自动加载（注意视频时长需 ≥ 60 秒）。
+
+改完自动选择相关的代码后，跑一下单测（需要 `luajit`，秒级）：
+
+```bash
+luajit test/auto_select_test.lua     # 通过 40，失败 0
+```
+
+它直接从 `menu.lua` 里切真实代码来跑，所以实现改了测试没跟上会立刻失败。
 
 ---
 

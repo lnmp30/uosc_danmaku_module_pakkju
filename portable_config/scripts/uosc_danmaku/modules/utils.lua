@@ -765,6 +765,27 @@ function get_parent_directory(path)
     return dir
 end
 
+-- 取「用来解析标题 / 集数的那个文件名」。
+--
+--! 为什么不能直接用 filename/no-ext：网络串流（安卓上很常见，path 是
+--! network://…）的 filename 只是一串不透明的 ID —— 实测是网盘的 fileId，
+--! 一个数字都抠不出来，于是集数匹配永远失败、日志里显示「文件名集数 无」。
+--! parse_title() 早就处理了这种情况（协议路径改用 media-title），这里把同一
+--! 套选择逻辑抽出来给别处复用。
+function get_media_filename()
+    local path = mp.get_property("path")
+    if path and is_protocol(path) then
+        local title = mp.get_property("media-title")
+        if title and title ~= "" then
+            -- 和 parse_title 保持一致：media-title 里可能带「名称 | 类型」后缀
+            local decoded = url_decode(title)
+            local name = decoded:match("^(.-)%s*|%s*(.-)%s*$")
+            return name or decoded
+        end
+    end
+    return mp.get_property("filename/no-ext")
+end
+
 -- 获取播放文件标题信息
 function parse_title()
     local path = mp.get_property("path")

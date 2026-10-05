@@ -1256,6 +1256,67 @@ uosc_danmaku+pakku 2.2.0 build 6/203032/b802e38f
 （不依赖 bit 库，Lua 5.1 / LuaJIT 通用），格式为
 `build 识别到的文件数/总字节/合并哈希`。**排查日志第一步就看这行。**
 
+### 网盘串流下必须用 media-title（0.8.8）
+
+`pick_auto_item()` 原来取 `mp.get_property("filename/no-ext")`，
+但安卓上播网盘串流时 `path` 是 `network://…`，`filename` 只是一串
+**不透明的 fileId** —— 一个数字都抠不出来。日志里「文件名集数」全程显示「无」，
+集数匹配从来没生效过。
+
+`parse_title()` 早就处理了这种情况（协议路径改用 `media-title`）。所以：
+
+- 新增 `get_media_filename()`：把同一套选择逻辑抽出来复用
+  （顺带剥掉 media-title 里的 `| 类型` 后缀）
+- `pick_auto_item()` 直接取 `parse_title()` 的 `season, episode` 返回值，
+  拿不到时才退回 `get_episode_number(get_media_filename())`
+
+顺带确认了一个曾经的误解：`get_episode_number()` 对 `[01]` 这种番剧命名
+**本来就是好的** —— `format_filename("[…] BOCCHI THE ROCK! [01][Ma10p…]")`
+得到 `BOCCHI THE ROCK E01`，集数 01 正常。问题只出在输入是 fileId。
+
+### 剧集列表里混着导航项（0.8.8）
+
+`get_episodes()` 的菜单第一项是「↩️ 返回搜索结果」
+（value 里是 `open-latest-menu-anime`），**不是剧集**。
+旧代码「匹配不上集数就取第一项」会直接选中它，把用户弹回搜索菜单 ——
+实测 43 条列表就选中了它，靠连按去重才没变成死循环。
+
+修法：剧集列表里只认 `item_command_kind() == "episode"` 的项；
+一条都没有时返回 nil，不再瞎选。搜索列表同理，只在
+`kind == "anime"` 的项里打分（一条都认不出时才退化为全部打分，
+兼容 value 形状未知的第三方路径）。
+
+`item_command_kind` 认得出的三种：`load-danmaku` → episode、
+`search-episodes-event` / `get-extra-event` → anime、
+`open-latest-menu-anime` / `open-menu` → nav。
+
+### 「结果先到先显示」会干扰自动选择（0.8.8）
+
+`make_handle_response` 里有一段「每收到一个服务器的响应就把当前进度弹出来」，
+它排了一个 `add_timeout(0.1)` 去 `open_menu_select`，**但没考虑
+`danmaku_auto_select`**。于是自动选择会选两次，第二次把第一次的请求掐掉。
+
+判据是两次 `列表判定` 的条数不一样（2 条 vs 3 条）——
+3 条 = `加载数据中…` 占位 + 2 条结果，正是 `display_items` 的形状。
+开自动选择时整段跳过即可（语义上「自动选择」本来就是「不弹菜单」）。
+
+### 测试留在仓库里（0.8.8）
+
+```
+luajit test/auto_select_test.lua     # 通过 40，失败 0
+```
+
+`test/auto_select_test.lua` 直接从 `menu.lua` / `utils.lua` 里
+**按标记切出真实代码**来跑（`slice()`），不复制实现 —— 这样实现改了而测试
+没跟上时会直接失败，而不是拿一份过时的副本自欺欺人。
+
+覆盖：`get_media_filename`、`hint_episode_number`（含「年份不算集数」）、
+`item_command_kind`、`looks_like_episode_list`、`pick_auto_item`
+（剧集/导航项/搜索列表/未知 value）、连按去重（含 A→B→A）、
+收尾只跑一次、「先到先显示」抑制。
+
+已验证测试本身不是摆设：把「只认剧集项」临时退回旧行为，用例立刻变红。
+
 ### 端到端验证（0.8.5）
 
 前几版受限于「mpv 的 subprocess 走管道捕获被沙箱拦」，只能验到 ③ 失败。

@@ -102,15 +102,16 @@ local function hint_episode_number(hint)
 end
 
 -- 菜单项的「种类」直接从它的 value 命令数组里读，比猜 hint 可靠得多：
---   搜索番剧（dandanplay） -> search-episodes-event
---   搜索番剧（extra）      -> get-extra-event
 --   具体某一集             -> load-danmaku
+--   搜索到的番剧           -> search-episodes-event（dandanplay）/ get-extra-event（extra）
+--   导航项（不是内容）     -> open-latest-menu-anime（「↩️ 返回搜索结果」那一条）
 local function item_command_kind(it)
     local v = it.value
     if type(v) ~= "table" then return nil end
     for _, arg in ipairs(v) do
         if arg == "load-danmaku" then return "episode" end
         if arg == "search-episodes-event" or arg == "get-extra-event" then return "anime" end
+        if arg == "open-latest-menu-anime" or arg == "open-menu" then return "nav" end
     end
     return nil
 end
@@ -150,8 +151,19 @@ end
 --   剧集列表：按文件名推断出的集数做精确匹配，匹配不上取第一集
 --   搜索列表：按「标题相似度 + 类型关键词」打分取最高
 local function pick_auto_item(items)
-    local filename = mp.get_property("filename/no-ext")
-    local number = filename and get_episode_number(filename) or nil
+    -- 集数从 parse_title() 的后两个返回值拿，而不是自己再解析一遍
+    -- filename/no-ext。
+    --
+    --! 实测（安卓）：播放的是网盘串流，path 是 network://… ，于是
+    --! filename/no-ext 只是一个不透明的 fileId，一个数字都抠不出来 ——
+    --! 日志里「文件名集数」一直显示「无」，集数匹配从来没生效过。
+    --! parse_title() 对协议路径会改用 media-title，那条路是对的。
+    local _, _, title_episode = parse_title()
+    local number = tonumber(title_episode)
+    if not number then
+        local filename = get_media_filename()
+        number = filename and get_episode_number(filename) or nil
+    end
 
     local is_episode_list = looks_like_episode_list(items)
 
@@ -163,31 +175,72 @@ local function pick_auto_item(items)
         #items, number and tostring(number) or "无")
 
     if is_episode_list then
-        local first
+        -- 只认真正的剧集项：剧集列表里还混着导航项（「↩️ 返回搜索结果」之类），
+        -- 它们排在第一位。旧代码「匹配不上就取第一项」会直接选中导航项，
+        -- 把用户弹回搜索菜单（实测 43 条列表选中了「↩️ 返回搜索结果」）。
+        local candidates = {}
         for _, it in ipairs(items) do
             if type(it.value) == "table" and it.selectable ~= false then
-                if not first then first = it end
-                if number and hint_episode_number(it.hint) == number then
-                    return it, string.format("集数精确匹配第 %d 集", number)
+                if item_command_kind(it) == "episode" then
+                    candidates[#candidates + 1] = it
                 end
             end
         end
-        if first then
-            return first, number and "没有匹配的集数，取第一集" or "文件名里没有集数，取第一集"
+
+        -- 一条剧集项都没有时（例如只有导航项）不要瞎选，交回上层
+        if #candidates == 0 then
+            if #items > 0 then
+                trace_osd("剧集列表里没有可用的剧集项（%d 条全是导航/占位）", #items)
+            end
+            return nil, nil
         end
-        return nil, nil
+
+        for _, it in ipairs(candidates) do
+            if number and hint_episode_number(it.hint) == number then
+                return it, string.format("集数精确匹配第 %d 集", number)
+            end
+        end
+        return candidates[1], number and "没有匹配的集数，取第一集" or "文件名里没有集数，取第一集"
     end
 
     local ref = parse_title()
     local best, best_score = nil, nil
     local ranked = {}
+
+    -- 只给「真正的番剧项」打分。列表里同样混着导航项（「↩️ 返回搜索结果」
+    -- 之类），它们的标题跟番剧名毫无关系，却可能靠类型关键词拿到分。
+    -- 一条类型都认不出来时（value 形状不认识的第三方路径）才退回给全部打分。
+    local pool, anime_pool, recognized = {}, {}, 0
     for _, it in ipairs(items) do
         if type(it.value) == "table" and it.selectable ~= false then
-            local s = score_anime_item(ref, it)
-            ranked[#ranked + 1] = { title = tostring(it.title), score = s }
-            if not best_score or s > best_score then
-                best, best_score = it, s
+            pool[#pool + 1] = it
+            local kind = item_command_kind(it)
+            if kind then
+                recognized = recognized + 1
+                if kind == "anime" then anime_pool[#anime_pool + 1] = it end
             end
+        end
+    end
+
+    if #anime_pool > 0 then
+        pool = anime_pool
+    elseif recognized > 0 then
+        -- 认出来的全是导航项/剧集项，没有番剧项 —— 不要瞎选一个导航项
+        pool = {}
+    end
+
+    if #pool == 0 then
+        if #items > 0 then
+            trace_osd("列表里没有可用的番剧项（%d 条全是导航/占位）", #items)
+        end
+        return nil, nil
+    end
+
+    for _, it in ipairs(pool) do
+        local s = score_anime_item(ref, it)
+        ranked[#ranked + 1] = { title = tostring(it.title), score = s }
+        if not best_score or s > best_score then
+            best, best_score = it, s
         end
     end
 
@@ -448,18 +501,32 @@ local function make_handle_response(ctx)
             end
         end
 
-        if uosc_available then
-            latest_menu_anime = update_menu_uosc(ctx.menu_type, ctx.menu_title, display_items, ctx.footnote, ctx.menu_cmd, ctx.query,
-                { "script-message-to", mp.get_script_name(), "cancel-active-request", ctx.menu_type })
-        else
-            if not ctx.first_opened.val and input_loaded and (ctx.total_count or 0) > 0 then
-                ctx.first_opened.val = true
-                show_message("", 0)
-                input.terminate()
-                mp.add_timeout(0.1, function()
-                    latest_menu_anime = utils.format_json(display_items)
-                    open_menu_select(display_items)
-                end)
+        -- 结果先到先显示：每收到一个服务器的响应就把当前进度弹出来。
+        --
+        --! 开自动选择时**必须整个跳过**。否则流程是：这里先排一个
+        --! `add_timeout(0.1)` 去 open_menu_select，接着 finish() 里自动选一条；
+        --! 0.1 秒后 open_menu_select 触发，它也会调 pick_auto_item（因为它也
+        --! 认 danmaku_auto_select），于是**又选一次**。两次各排一个
+        --! search-episodes-event，第二个把第一个的 curl 掐掉 ——
+        --! 实测就是那行 `Exit code: -2` 加 0 字节进度表。
+        --! 这里多出来的那条还是 `加载数据中…` 占位项（下面 display_items 插的），
+        --! 所以日志里两次的条数会不一样（2 条 vs 3 条）——正是这个原因。
+        if not options.danmaku_auto_select then
+            if uosc_available then
+                latest_menu_anime = update_menu_uosc(ctx.menu_type, ctx.menu_title, display_items, ctx.footnote, ctx.menu_cmd, ctx.query,
+                    { "script-message-to", mp.get_script_name(), "cancel-active-request", ctx.menu_type })
+            else
+                if not ctx.first_opened.val and input_loaded and (ctx.total_count or 0) > 0 then
+                    ctx.first_opened.val = true
+                    show_message("", 0)
+                    input.terminate()
+                    mp.add_timeout(0.1, function()
+                        -- 自动选择可能在这 0.1 秒里被打开，兜一层
+                        if options.danmaku_auto_select then return end
+                        latest_menu_anime = utils.format_json(display_items)
+                        open_menu_select(display_items)
+                    end)
+                end
             end
         end
 
