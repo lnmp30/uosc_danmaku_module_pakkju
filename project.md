@@ -59,9 +59,9 @@ mpv_pakkujs/
 
 | 文件 | 状态 | 说明 |
 |---|---|---|
-| `portable_config/scripts/uosc_danmaku/modules/pakku.lua` | **新增** | 1352 行 / 56 KB，算法本体 |
-| `portable_config/scripts/uosc_danmaku/modules/options.lua` | 修改 | 新增 21 个 `pakku_*` 选项默认值（对齐 pakku.js） |
-| `portable_config/scripts/uosc_danmaku/modules/parse.lua` | 修改 | 合并分支接入、`xN` 加粗、字号缩放 |
+| `portable_config/scripts/uosc_danmaku/modules/pakku.lua` | **新增** | 1391 行 / 57 KB，算法本体 |
+| `portable_config/scripts/uosc_danmaku/modules/options.lua` | 修改 | 新增 22 个 `pakku_*` 选项默认值（对齐 pakku.js） |
+| `portable_config/scripts/uosc_danmaku/modules/parse.lua` | 修改 | 合并分支接入、`merge_mark` 加粗、字号缩放 |
 | `portable_config/scripts/uosc_danmaku/main.lua` | 修改 | 加载顺序里加 `require("modules/pakku")` |
 | `portable_config/script-opts/uosc_danmaku.conf` | 修改 | 新增 pakku 选项段（已按 pakku.js 默认值启用） |
 
@@ -97,7 +97,7 @@ mpv_pakkujs/
                  ┌──────────────────────────┐
                  │ 布局：滚动/顶部/底部各算 y │  DanmakuArray
                  │ 字号：fontsize×merge_scale │  ★ 本次新增分支
-                 │ 文本：ASS 转义 + xN 加粗 │  ★ 本次新增分支
+                 │ 文本：ASS 转义 + 标记加粗 │  ★ 本次新增分支
                  └────────────┬─────────────┘
                               ▼
                     COMMENTS = ass_events
@@ -132,16 +132,36 @@ mpv_pakkujs/
 
 | 章节 | 行号 | 内容 |
 |---|---|---|
-| 头部文档 | 1–37 | 用法、接口、字段说明 |
-| **0. UTF-8 小工具** | 62–101 | `utf8_char_list` `utf8_codepoint` `utf8_count` `is_cjk_codepoint` |
-| **1. 拼音字典** | 103–538 | `PINYIN_SRC` 数据块（115–513）、`pinyin_dict()` 懒加载（518） |
-| **2. 文本预处理** | 541–669 | `ENDING_CHARS`、`WIDTH_TABLE`、`normalize_spaces()`（580）、`quantifier_to_lua()`（612）、`M.normalize()`（634） |
-| **3. 相似度计算** | 672–770 | `freq_of_chars` `freq_of_pinyin` `freq_distance` `make_bigrams` `gram_cosine`、`M.edit_distance`（751） `M.pinyin_distance`（758） `M.cosine_similarity`（766） |
-| **4. 配置** | 773–874 | `pick` `tonum` `tobool`、`M.build_config()`（805） |
-| **5. 聚类** | 877–1012 | `M.build_ir()`（881） `M.check_similar()`（909） `cluster()`（966） |
-| **6. 字号放大 / 标记** | 1015–1041 | `enlarge_scale()`、`make_mark()`（1029） |
-| **7. 密度调控** | 1044–1134 | `M.dispval()` `judge_drop()` `M.adjust_density()`（1070） |
-| **8. 对外主入口** | 1137–1352 | `choose_display_text()`（1141） `dominant_reason()` `M.merge()`（1206） |
+| 头部文档 | 1–38 | 用法、接口、字段说明 |
+| **0. UTF-8 小工具** | 63–102 | `utf8_char_list` `utf8_codepoint` `utf8_count` `is_cjk_codepoint` |
+| **1. 拼音字典** | 104–539 | `PINYIN_SRC` 数据块（116–514）、`pinyin_dict()` 懒加载（519） |
+| **2. 文本预处理** | 542–670 | `ENDING_CHARS`、`WIDTH_TABLE`、`normalize_spaces()`（581）、`quantifier_to_lua()`（613）、`M.normalize()`（635） |
+| **3. 相似度计算** | 673–771 | `freq_of_chars` `freq_of_pinyin` `freq_distance` `make_bigrams` `gram_cosine`、`M.edit_distance`（752） `M.pinyin_distance`（759） `M.cosine_similarity`（767） |
+| **4. 配置** | 774–877 | `pick` `tonum` `tobool`、`M.build_config()`（806），`mark_subscript` 在 806 段内 |
+| **5. 聚类** | 880–1015 | `M.build_ir()`（884） `M.check_similar()`（912） `cluster()`（969） |
+| **6. 字号放大 / 标记** | 1018–1078 | `enlarge_scale()`、`SUBSCRIPT_DIGITS`、`to_subscript()`（1040）、`make_mark_tag()`（1060）、`make_mark()`（1071） |
+| **7. 密度调控** | 1081–1171 | `M.dispval()` `judge_drop()` `M.adjust_density()`（1107） |
+| **8. 对外主入口** | 1174–1391 | `choose_display_text()`（1178） `dominant_reason()` `M.merge()`（1243） |
+
+### 合并标记的生成
+
+标记不靠正则猜，而是由 `make_mark_tag(count, cfg)` 直接生成、写进
+`entry.merge_mark`，`parse.lua` 拿它做明文比对定位再插 `{\b1}`。
+这样换任何标记样式都不用改渲染层的正则。
+
+| 配置 | 产出 |
+|---|---|
+| `mark=suffix`（默认）+ `mark_subscript=yes`（默认） | `恭喜₍₁₂₎` |
+| `mark=suffix` + `mark_subscript=no` | `恭喜[x12]` |
+| `mark=prefix` + `mark_subscript=yes` | `₍₁₂₎恭喜` |
+| `mark=off` | `恭喜`（`merge_mark` 为空串） |
+
+下标数字用 Unicode 的 Superscripts and Subscripts 区段：
+数字 `U+2080`–`U+2089`，括号 `₍ U+208D` / `₎ U+208E`。
+`to_subscript()` 逐位转换并反转，对应 pakku.js 的 `to_subscript()`。
+
+> 字形可用性：在本项目的字体环境下（Microsoft YaHei / Noto Sans CJK），
+> mpv + libass 渲染这些码位**没有**任何缺字形告警，实测 735 处标记全部正常。
 
 ### 默认值对齐 pakku.js
 
@@ -161,15 +181,17 @@ mpv_pakkujs/
 | `pakku_enlarge_max_scale` | 2.0 | `Math.min(..., 2)` 的等效上限 |
 | `pakku_representative_percent` | 20 | `REPRESENTATIVE_PERCENT` |
 | `pakku_mode_elevation` | true | `MODE_ELEVATION` |
+| `pakku_mark` | `suffix` | `DANMU_MARK`（pakku.js 是 `prefix`） |
+| `pakku_mark_subscript` | true | `DANMU_SUBSCRIPT` |
 | `pakku_mark_threshold` | 1 | `MARK_THRESHOLD` |
 | `pakku_forcelist` | 23333 / 66666 | `FORCELIST` |
 | `pakku_shrink_threshold` / `pakku_drop_threshold` | 0 | `SHRINK_THRESHOLD` / `DROP_THRESHOLD` |
 
 **两处有意偏离**（都写在 `options.lua` 的注释里）：
 
-1. `pakku_mark=suffix` + 纯文本 `xN`。pakku.js 是 `DANMU_MARK='prefix'` +
-   `DANMU_SUBSCRIPT=true`，即 `₍₁₂₎文本`。本实现按使用习惯保留 `xN` 后缀，
-   也没有移植下标数字。
+1. **标记的位置**：`pakku_mark=suffix`。pakku.js 默认 `DANMU_MARK='prefix'`，
+   标在弹幕开头（`₍₁₂₎文本`）；本实现按使用习惯标在**末尾**（`文本₍₁₂₎`）。
+   标记的**内容**（下标数字 + 下标括号）与 pakku.js 完全一致。
 2. `pakku_enable` 在库层面（`options.lua`）默认仍是 `false`，
    但本项目自带的 `uosc_danmaku.conf` 里显式写了 `pakku_enable=yes`。
    这样库升级不会突然改变已有用户的行为，而本项目装好即用。
@@ -220,12 +242,12 @@ pakku.pinyin_group_count()          -- 拼音组数量（自检用，应为 398�
 
 | 文章提到 | 文章行号 | 本实现位置 | 备注 |
 |---|---|---|---|
-| `PINYIN_DICT` | `modules/pakku.lua:16` | `pakku.lua:115` `PINYIN_SRC` + `pakku.lua:518` `pinyin_dict()` | 改为「编码→汉字串」压缩存储，398 行 |
-| 文本预处理 | `modules/pakku.lua:436` | `pakku.lua:634` `M.normalize()` | 空格处理改成逐字符，见 §10 |
-| `M.edit_distance` | `modules/pakku.lua:488` | `pakku.lua:751` | 算法一致 |
-| `M.cosine_similarity` | `modules/pakku.lua:522` | `pakku.lua:766` | 算法一致（未采用 C++ 的环绕 bigram） |
-| `cluster` | `modules/pakku.lua:578` | `pakku.lua:966` | 一致，自后向前扫描窗口 |
-| 密度调控 | 未给行号 | `pakku.lua:1070` `M.adjust_density()` | 按 `post_combine.ts` 实现 |
+| `PINYIN_DICT` | `modules/pakku.lua:16` | `pakku.lua:116` `PINYIN_SRC` + `pakku.lua:519` `pinyin_dict()` | 改为「编码→汉字串」压缩存储，398 行 |
+| 文本预处理 | `modules/pakku.lua:436` | `pakku.lua:635` `M.normalize()` | 空格处理改成逐字符，见 §10 |
+| `M.edit_distance` | `modules/pakku.lua:488` | `pakku.lua:752` | 算法一致 |
+| `M.cosine_similarity` | `modules/pakku.lua:522` | `pakku.lua:767` | 算法一致（未采用 C++ 的环绕 bigram） |
+| `cluster` | `modules/pakku.lua:578` | `pakku.lua:969` | 一致，自后向前扫描窗口 |
+| 密度调控 | 未给行号 | `pakku.lua:1107` `M.adjust_density()` | 按 `post_combine.ts` 实现 |
 
 文章的默认值参数与 pakku.js 官方默认不同（文章写 `threshold` 短、
 放大「10 条起、以 10 为底」）。本实现**以 pakku.js 的 `DEFAULT_CONFIG` 为准**，
@@ -310,9 +332,14 @@ if code % 64 > 0 then f[code % 64] += 1 end
 | `merge_count` | 该簇合并了多少条原始弹幕 |
 | `merge_scale` | 字号系数（放大 >1，密度缩小时 <1，正常 =1） |
 | `merge_reason` | 命中判定：`identical` / `edit` / `pinyin` / `cosine` / `orig` |
-| `text` | 合并后带 `xN` 标记的文本，如 `恭喜x12` |
+| `merge_mark` | 标记本体，如 `₍₁₂₎`；未加标记时为空串 `""` |
+| `text` | 合并后带标记的文本，如 `恭喜₍₁₂₎` |
 
-`merge_scale` 存在与否是 `parse.lua` 区分「pakku 路径」和「内置合并路径」的开关。
+`parse.lua` 依赖两个字段：
+
+- `merge_scale` 存在与否，区分「pakku 路径」和「内置合并路径」的字号算法
+- `merge_mark` 用于把标记加粗——用明文比对定位（先试末尾、再试开头），
+  不依赖正则，所以换标记样式不需要动渲染层
 
 ---
 
@@ -380,8 +407,9 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 | `table.remove(t, 1)` | 是 O(n)，窗口大时（threshold 调很大）会有开销；当前实现跟随文章用 FIFO，窗口通常 <100 |
 | `merge_scale` vs `merge_count` | `parse.lua` 里 `merge_scale` 非空就走 pakku 字号分支，会**跳过** `merge_fontsize_growth` / `merge_fontsize_max` |
 | 字号基准不同 | pakku.js 假设基准字号 25，uosc_danmaku 默认 `fontsize=50`，dispval 按 `(size/25)^1.5` 会翻倍，所以 `pakku_shrink_threshold` / `pakku_drop_threshold` 的数值需要相应放大 |
-| ASS 标记 | `{\b1\i1}` 是「粗体 + **斜体**」，`\i1` 就是斜体开关。合并标记只需要粗体，写成 `{\b1}` 即可；早期版本误带了 `\i1`，后缀会显示成斜体 |
-| 加粗正则要限流 | `gsub("x(%d+)$", ...)` 会把正文里恰好以 `x12` 结尾的弹幕也加粗。现在的写法先判断 `(d.merge_count or 1) > 1`，只有真合并过的条目才处理 |
+| ASS 标记 | `{\b1\i1}` 是「粗体 + **斜体**」，`\i1` 就是斜体开关。合并标记只需要粗体，写成 `{\b1}` 即可；0.1.0 版本误带了 `\i1`，后缀会显示成斜体 |
+| 加粗不要用正则猜 | 早期写法 `gsub("x(%d+)$", ...)` 既会把正文里恰好以 `x12` 结尾的弹幕误加粗，也锁死了标记的样式。现在由 `pakku.lua` 给出 `merge_mark`，`parse.lua` 用**明文比对**定位（先试末尾、再试开头）后插 `{\b1}`，换任何标记样式都不用动渲染层 |
+| 下标字符的字体覆盖 | 标记用的 `U+2080-2089` / `U+208D-E` 不在基本区，字体缺字形时会显示成方框。本项目字体（Microsoft YaHei / Noto Sans CJK）渲染正常；换字体后可用 `--msg-level=all=v` 观察 libass 有无缺字形告警 |
 | 测试时 `--script-opts` 会被覆盖 | mpv 的 `script-opts` 是单个字符串选项，**重复传会后者覆盖前者**。要一次传多个必须用逗号：`--script-opts=a-b=1,a-c=2` |
 
 ---
@@ -412,23 +440,27 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 | `pinyin_distance("是","事")` | `0` |
 | `pinyin_distance("你","我")` | `> 0` |
 | `pinyin_group_count()` | `398` |
-| `build_config({})` 的 15 个字段 | 全部等于 §6 表里的 pakku.js 默认值 |
-| 合并 3 条相同弹幕后的 `text` | `恭喜x3`，**不含 `[` `]`** |
-| 未合并的单条且正文以 `x12` 结尾 | `merge_count == 1`，`text` 保持原文（不该被当成标记） |
+| `build_config({})` 的 16 个字段 | 全部等于 §6 表里的 pakku.js 默认值 |
+| 合并 3 条相同弹幕后的 `text` | `恭喜₍₃₎`，`merge_mark == "₍₃₎"` |
+| `to_subscript` 覆盖多位数 | 1/2/5/9/10/12/23/47/69/100/1234 → `₁`…`₁₂₃₄` |
+| `mark_subscript=false` | 标记变成 `[x3]` |
+| `mark=prefix` | 文本变成 `₍₃₎恭喜` |
+| `mark=off` | `merge_mark == ""`，文本保持 `恭喜` |
+| 未合并的单条且正文以 `x12` 结尾 | `merge_count == 1`、`merge_mark == ""`，`text` 保持原文 |
 
 ### 11.2 真实弹幕压测
 
 工作区自带 3 集弹幕（合计 20086 条），跑一遍确认合并数量和耗时：
 
 ```
-03   6592 -> 4773   306ms  最多x60
-04   6702 -> 4884   314ms  最多x69
-07   6792 -> 4709   307ms  最多x47
+03   6592 -> 4773   306ms  最多₍₆₀₎
+04   6702 -> 4884   314ms  最多₍₆₉₎
+07   6792 -> 4709   307ms  最多₍₄₇₎
 合计 20086 -> 14366（71.5%），平均 309ms/集
 ```
 
-期望的 top 结果形态：`？？？？？？？x60`、`kksk x46`、`👍...👍x69`、`波门x47`
-这类刷屏弹幕。注意**没有方括号**。
+期望的 top 结果形态：`？？？？？？？₍₆₀₎`、`kksk₍₄₆₎`、`👍...👍₍₆₉₎`、`波门₍₄₇₎`
+这类刷屏弹幕。
 
 ### 11.3 端到端跑 mpv
 
@@ -461,18 +493,19 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 检查标记格式与字号：
 
 ```
-2.00  72  {\move(2010, 251, -90, 251)}{\c&HFFFFFF&}簽{\b1}x10
-3.00  50  {\move(2057, 51, -137, 51)}{\c&HFFFFFF&}2024.2.14{\b1}x2
+2.00  72  {\move(2100, 251, -180, 251)}{\c&HFFFFFF&}簽{\b1}₍₁₀₎
+0.00  50  {\move(2157, 51, -237, 51)}{\c&H3DE5FD&}2024.12.23 簽{\b1}₍₂₎
 ```
 
-自检三项（对 dump 结果做计数）：
+自检项（对 dump 结果做计数）：
 
 | 检查 | 期望 |
 |---|---|
 | 含 `\i1`（斜体）的行数 | `0` |
-| 含 `[xN]` 方括号的行数 | `0` |
-| 含 `{\b1}xN` 的行数 | `> 0` |
+| 含 `{\b1}₍N₎` 的行数 | `> 0`（本次实测 735） |
+| 含旧样式 `{\b1}xN` 的行数 | `0` |
 | 字号分布 | 从 `50` 起，最大不超过 `100`（即 2 倍上限） |
+| libass 缺字形告警 | 无（下标码位 `U+2080-2089` / `U+208D-E` 在本项目字体下可渲染） |
 
 ### 11.4 语法检查
 
@@ -487,8 +520,8 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 ### 加一条新的相似判定规则
 
 1. 在 §3 里写判定函数（输入两条 `ir`，输出 `true/false`）
-2. 在 `M.check_similar()`（`pakku.lua:909`）的四级判定链里插入，注意顺序即优先级
-3. 若需要新的预计算量，加进 `M.build_ir()`（`pakku.lua:881`）
+2. 在 `M.check_similar()`（`pakku.lua:912`）的四级判定链里插入，注意顺序即优先级
+3. 若需要新的预计算量，加进 `M.build_ir()`（`pakku.lua:884`）
 4. 在 `dominant_reason()` 的 `rank` 表里给新 reason 一个权重
 5. 在 `stats` 表里加同名字段，`M.merge()` 会自动统计
 6. 若要有独立开关，按 §9 的 4 处套路加选项
@@ -506,7 +539,7 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 
 ### 调整密度策略
 
-`M.adjust_density()`（`pakku.lua:1067`）里的常量：
+`M.adjust_density()`（`pakku.lua:1107`）里的常量：
 
 | 常量 | 值 | 含义 |
 |---|---|---|
@@ -519,9 +552,26 @@ pakku.js 那边用的是 `proto_likecount`）。
 
 ### 改合并后的展示文本
 
-`choose_display_text()`（`pakku.lua:1138`）：
+`choose_display_text()`（`pakku.lua:1178`）：
 先按预处理文本分组取最高频，并列时取长度中位数；
 `pakku_normalize_display=no` 时改显示该组里出现最多的**原始**文本。
+
+### 改合并标记的样式
+
+只需要动 `make_mark_tag()`（`pakku.lua:1060`）这一个函数，返回什么就显示什么：
+
+```lua
+local function make_mark_tag(count, cfg)
+    if cfg.mark == "off" or count <= cfg.mark_threshold then return "" end
+    if cfg.mark_subscript then
+        return SUBSCRIPT_LPAREN .. to_subscript(count) .. SUBSCRIPT_RPAREN
+    end
+    return "[x" .. count .. "]"
+end
+```
+
+位置（前/后缀）由 `make_mark()`（`pakku.lua:1071`）按 `cfg.mark` 拼装。
+渲染层不用改——`parse.lua` 拿的是 `entry.merge_mark` 明文，多长的标记都能定位。
 
 ---
 
@@ -540,6 +590,10 @@ pakku.js 那边用的是 `proto_likecount`）。
   没做进 uosc 的图形化菜单（`modules/menu.lua`）。
 - **拼音表只覆盖简体常用字**：6763 字以外的字符（生僻字、日文假名、emoji）
   按原字符参与比较，靠编辑距离/余弦兜底。
+- **标记依赖字体覆盖下标码位**：`U+2080-2089` / `U+208D-E` 属于
+  Superscripts and Subscripts 区段，不在 CJK 基本区。本项目字体渲染正常，
+  但换到字形不全的字体上可能显示成方框；这种情况把
+  `pakku_mark_subscript=no` 切回 `[xN]` 即可。
 
 ---
 

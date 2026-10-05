@@ -25,7 +25,8 @@
         --   merge_count  该簇合并了多少条原始弹幕
         --   merge_scale  字号放大系数（1 表示不放大，密度缩小时会小于 1）
         --   merge_reason 命中的判定："identical"/"edit"/"pinyin"/"cosine"/"orig"
-        --   text         合并后带 xN 标记的文本（如 "恭喜x12"）
+        --   merge_mark   标记本体，如 "₍₁₂₎"（供渲染层加粗用，未标记时为 ""）
+        --   text         合并后带标记的文本（如 "恭喜₍₁₂₎"）
 
     同时导出若干纯函数，方便单独验证：
 
@@ -815,6 +816,8 @@ function M.build_config(o)
     cfg.cross_mode       = tobool(pick(o, "cross_mode", true), true)
     cfg.mark             = tostring(pick(o, "mark", "suffix") or "suffix"):lower()
     cfg.mark_threshold   = tonum(pick(o, "mark_threshold", 1), 1)
+    -- pakku.js: DANMU_SUBSCRIPT = true，即用下标 ₍₁₂₎ 而不是 [x12]
+    cfg.mark_subscript   = tobool(pick(o, "mark_subscript", true), true)
     cfg.enlarge          = tobool(pick(o, "enlarge", true), true)
     cfg.enlarge_min_count = tonum(pick(o, "enlarge_min_count", 5), 5)
     cfg.enlarge_max_scale = tonum(pick(o, "enlarge_max_scale", 2.0), 2.0)
@@ -1027,13 +1030,47 @@ local function enlarge_scale(count, cfg)
     return r
 end
 
--- 合并数量标记。默认产出 "x12" 这样的纯后缀，方便 parse.lua 做加粗；
--- pakku.js 默认是前缀 + 下标数字（₍₁₂₎文本），本实现按使用习惯保留 xN 后缀。
-local function make_mark(text, count, cfg)
-    if cfg.mark == "off" or count <= cfg.mark_threshold then
-        return text
+-- 下标数字（U+2080 ~ U+2089）与下标括号（U+208D / U+208E）。
+-- pakku.js 的 DANMU_SUBSCRIPT=on 时用它拼出 ₍₁₂₎ 这种标记。
+local SUBSCRIPT_DIGITS = { "₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉" }
+local SUBSCRIPT_LPAREN = "₍"
+local SUBSCRIPT_RPAREN = "₎"
+
+-- 把十进制数转成下标数字串，对应 pakku.js 的 to_subscript()
+local function to_subscript(x)
+    x = math.floor(tonumber(x) or 0)
+    if x <= 0 then return SUBSCRIPT_DIGITS[1] end
+
+    local out, n = {}, 0
+    while x > 0 do
+        n = n + 1
+        out[n] = SUBSCRIPT_DIGITS[(x % 10) + 1]
+        x = math.floor(x / 10)
     end
-    local tag = "x" .. count
+    -- 上面是从低位往高位收集的，反转回来
+    for i = 1, math.floor(n / 2) do
+        out[i], out[n - i + 1] = out[n - i + 1], out[i]
+    end
+    return table.concat(out)
+end
+
+-- 生成合并数量标记本身（不含位置）。
+--   mark_subscript = true  -> "₍₁₂₎"   （对齐 pakku.js DANMU_SUBSCRIPT=on）
+--   mark_subscript = false -> "[x12]"  （对齐 pakku.js DANMU_SUBSCRIPT=off）
+local function make_mark_tag(count, cfg)
+    if cfg.mark == "off" or count <= cfg.mark_threshold then
+        return ""
+    end
+    if cfg.mark_subscript then
+        return SUBSCRIPT_LPAREN .. to_subscript(count) .. SUBSCRIPT_RPAREN
+    end
+    return "[x" .. count .. "]"
+end
+
+-- 把标记拼到文本上。默认后缀（pakku.js 默认是 prefix，本实现按使用习惯用 suffix）。
+local function make_mark(text, count, cfg)
+    local tag = make_mark_tag(count, cfg)
+    if tag == "" then return text end
     if cfg.mark == "prefix" then
         return tag .. text
     end
@@ -1288,6 +1325,8 @@ function M.merge(danmakus, cfg)
         entry.type = mode
         entry.color = rep.color
         entry.size = rep.size
+        -- merge_mark 单独存一份，parse.lua 用它把标记加粗（不用正则去猜）
+        entry.merge_mark = make_mark_tag(count, cfg)
         entry.text = make_mark(display, count, cfg)
         entry.merge_count = count
         entry.merge_scale = scale

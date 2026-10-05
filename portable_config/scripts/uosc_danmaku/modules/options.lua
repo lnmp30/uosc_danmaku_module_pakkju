@@ -68,10 +68,12 @@ options = {
     -- 是否允许不同类型（滚动/顶部/底部）的弹幕合并
     -- pakku.js: CROSS_MODE = true
     pakku_cross_mode = true,
-    -- 合并数量标记：off / suffix / prefix，渲染为 xN
-    --! 有意偏离 pakku.js 的 DANMU_MARK='prefix' + 下标数字（₍₁₂₎文本），
-    --! 沿用 uosc_danmaku 习惯的 xN 后缀
+    -- 合并数量标记位置：off / suffix / prefix，如 恭喜₍₁₂₎
+    --! 有意偏离 pakku.js 的 DANMU_MARK='prefix'，沿用 uosc_danmaku 习惯的 xN 后缀位置
     pakku_mark = "suffix",
+    -- 标记是否用下标数字：yes -> ₍₁₂₎，no -> [x12]
+    -- pakku.js: DANMU_SUBSCRIPT = true
+    pakku_mark_subscript = true,
     -- 合并数量超过该值时才会添加标记
     -- pakku.js: MARK_THRESHOLD = 1
     pakku_mark_threshold = 1,

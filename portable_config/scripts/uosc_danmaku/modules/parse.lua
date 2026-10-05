@@ -763,10 +763,19 @@ function convert_danmaku_to_ass_events(force)
         local appear_time = ev.start_time
         local danmaku_type = d.type
         local clean_text = ch_convert_cached(decode_html_entities(d.text))
-        -- 合并标记加粗：只加 \b1（粗体），不加 \i1（斜体）；
-        -- 而且只在确实发生了合并时才处理，避免把正文里恰好以 x12 结尾的弹幕也加粗
+        -- 合并标记加粗：只加 \b1（粗体），不加 \i1（斜体）。
+        -- 标记本体由 pakku.lua 通过 merge_mark 给出（₍₁₂₎ / [x12]），
+        -- 这里用明文比对定位，避免正则去猜标记的形状
         local text = ass_escape(clean_text)
-        if (d.merge_count or 1) > 1 then
+        local mark = d.merge_mark
+        if mark and mark ~= "" and #text >= #mark then
+            if text:sub(-#mark) == mark then
+                text = text:sub(1, #text - #mark) .. "{\\b1}" .. mark
+            elseif text:sub(1, #mark) == mark then
+                text = "{\\b1}" .. mark .. text:sub(#mark + 1)
+            end
+        elseif (d.merge_count or 1) > 1 then
+            -- 内置合并（merge_duplicate_danmaku）走这里：标记是纯后缀 xN
             text = text:gsub("x(%d+)$", "{\\b1}x%1")
         end
         local event_fontsize

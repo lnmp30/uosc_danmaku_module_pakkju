@@ -5,6 +5,25 @@
 
 ---
 
+## 0. 出处
+
+本项目的**需求来源与算法说明**出自下面这篇博客文章：
+
+| 项目 | 内容 |
+|---|---|
+| 标题 | 在 uosc_danmaku 中集成 pakkujs 弹幕合并算法 |
+| 作者站点 | [blog.episvr.top](https://blog.episvr.top) |
+| 原文地址 | **<https://blog.episvr.top/2026/06/29/uosc_danmaku-pakkujs/>** |
+| 本地存档 | `在 uosc_danmaku 中集成 pakkujs 弹幕合并算法.md`（工作区根目录，含原文配图） |
+| 参考实现 | [xmcp/pakku.js](https://github.com/xmcp/pakku.js) —— 算法、拼音字典与默认配置均取自这里 |
+| 宿主插件 | [Tony15246/uosc_danmaku](https://github.com/Tony15246/uosc_danmaku) |
+
+本文档只描述**本项目做了哪些取舍、怎么用**；
+算法的原理推导（编辑距离、拼音距离、余弦相似度、滑动窗口聚类）
+请直接看上面那篇博客，这里不重复。
+
+---
+
 ## 1. 它能做什么
 
 B 站网页版有个很有名的扩展叫 **pakku.js**，专门用来把刷屏的重复弹幕合并成一条。
@@ -19,18 +38,22 @@ B 站网页版有个很有名的扩展叫 **pakku.js**，专门用来把刷屏�
 | `在吗` `再吗` | ❌ | ✅ 合成一条（拼音相同） |
 | `好看` `好看啊` | ❌ | ✅ 合成一条（余弦相似） |
 
-合并后会在末尾标上合并条数，比如：
+合并后会在末尾标上合并条数，样式**和 pakku.js 一致** —— 下标数字加下标括号：
 
 ```
-完结撒花x12
-👍👍👍👍👍👍👍👍👍👍x69
-kksk x46
+完结撒花₍₁₂₎
+👍👍👍👍👍👍👍👍👍👍₍₆₉₎
+kksk₍₄₆₎
 ```
 
-- **没有方括号**，就是紧跟在正文后面的 `x数字`
-- 这个后缀是**粗体**，不是斜体
+- 是**下标**小数字，没有 `x`，也没有方括号
+- 这个标记是**粗体**，不是斜体
 - 合并得越多，这条弹幕在屏幕上**显示得越大**（默认最多放大到 2 倍），
   让真正的热门弹幕更醒目
+
+> 标记的位置与 pakku.js 略有不同：pakku.js 默认标在弹幕**开头**，
+> 本项目标在**末尾**。内容（`₍₁₂₎`）完全一样。
+> 想改成开头：`pakku_mark=prefix`。
 
 ---
 
@@ -39,6 +62,9 @@ kksk x46
 - mpv（本项目在 **v0.41.0** 上验证，任意带 Lua 支持的版本都可以）
 - 已安装 [uosc_danmaku](https://github.com/Tony15246/uosc_danmaku) 插件
 - 文件必须是 **UTF-8 编码 + Unix 换行（LF）**，否则 mpv 读不出中文
+- 字体需要覆盖下标码位（`U+2080-2089`、`U+208D-E`）。
+  Microsoft YaHei、Noto Sans CJK 都可以；换字体后如果标记显示成方框，
+  把 `pakku_mark_subscript=no` 即可切回 `[x12]` 样式
 
 ---
 
@@ -121,8 +147,8 @@ mpv.exe --msg-level=uosc_danmaku=v "你的视频.mkv"
 ## 6. 全部选项
 
 下面所有默认值都等于 **pakku.js 官方 DEFAULT_CONFIG**，
-唯一有意不同的是 `pakku_mark`（pakku.js 默认是前缀下标 `₍₁₂₎文本`，
-这里按使用习惯保留 `xN` 后缀）。改完重启 mpv 生效。
+唯一有意不同的是标记的**位置**（pakku.js 标在开头，这里标在末尾）。
+改完重启 mpv 生效。
 
 ### 6.1 基础
 
@@ -153,7 +179,8 @@ mpv.exe --msg-level=uosc_danmaku=v "你的视频.mkv"
 
 | 选项 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `pakku_mark` | 枚举 | `suffix` | 合并条数标记位置：`suffix` 后置（`恭喜x12`）/ `prefix` 前置（`x12恭喜`）/ `off` 不显示 |
+| `pakku_mark` | 枚举 | `suffix` | 标记位置：`suffix` 末尾（`恭喜₍₁₂₎`）/ `prefix` 开头（`₍₁₂₎恭喜`）/ `off` 不显示 |
+| `pakku_mark_subscript` | yes/no | `yes` | 标记是否用下标数字：`yes` → `₍₁₂₎`，`no` → `[x12]` |
 | `pakku_mark_threshold` | 整数 | `1` | 合并条数超过这个值才加标记 |
 | `pakku_enlarge` | yes/no | `yes` | 是否按合并条数放大字号 |
 | `pakku_enlarge_min_count` | 整数 | `5` | 合并条数超过这个值才开始放大 |
@@ -162,10 +189,20 @@ mpv.exe --msg-level=uosc_danmaku=v "你的视频.mkv"
 | `pakku_mode_elevation` | yes/no | `yes` | 簇里混有底部/顶部弹幕时，把整簇提升为更醒目的类型 |
 | `pakku_representative_percent` | 0–100 | `20` | 取簇内第百分之几的成员作为代表，决定合并后的时间、颜色、字号 |
 
+标记的四种组合：
+
+| `pakku_mark` | `pakku_mark_subscript` | 效果 |
+|---|---|---|
+| `suffix`（默认） | `yes`（默认） | `恭喜₍₁₂₎` |
+| `suffix` | `no` | `恭喜[x12]` |
+| `prefix` | `yes` | `₍₁₂₎恭喜` |
+| `off` | — | `恭喜` |
+
 备注：
 
-- 后缀在画面上是**粗体**显示（`{\b1}`），不带斜体
-- 标记只在真的发生了合并时才会被加粗，正文里恰好以 `x12` 结尾的弹幕不受影响
+- 标记在画面上是**粗体**显示（`{\b1}`），不带斜体
+- 标记是不是加粗，由 pakku 模块直接告诉渲染层（`merge_mark` 字段），
+  不靠正则去猜，所以正文里恰好以 `x12` 结尾的弹幕不会被误加粗
 - `pakku_representative_percent` 一般不用动。它取的是一个**簇内**的相对位置：
   合并 N 条时取第 `floor(N × 百分比 ÷ 100) + 1` 条作为代表，
   比如合并了 10 条、取值 20，就取第 3 条的时间点作为这一簇的出现时间
@@ -268,7 +305,7 @@ pakku_threshold=10
 pakku_enlarge=no
 ```
 
-### 场景 F：不想看到 `x12` 这种标记
+### 场景 F：不想看到 `₍₁₂₎` 这种标记
 
 ```ini
 pakku_mark=off
@@ -280,7 +317,21 @@ pakku_mark=off
 pakku_mark_threshold=5
 ```
 
-### 场景 G：合并后文本被改了，想保留原文
+标记改成 pakku.js 的**开头**位置（默认在末尾）：
+
+```ini
+pakku_mark=prefix
+```
+
+### 场景 G：字体不支持下标，标记显示成方框
+
+```ini
+pakku_mark_subscript=no
+```
+
+标记会退回 `[x12]` 的形式。
+
+### 场景 H：合并后文本被改了，想保留原文
 
 ```ini
 pakku_normalize_display=no
@@ -306,13 +357,16 @@ pakku_normalize_display=no
 
 ## 9. 常见问题
 
-**Q：后缀为什么是斜体？**
-A：那是旧版本的行为。早先的加粗标记写成 `{\b1\i1}`，`\i1` 就是斜体。
-现在已改成只加粗（`{\b1}`），**不会再斜**。升级后如果还看到斜体，
-确认 `parse.lua` 里那行是 `{\\b1}x%1`。
+**Q：后缀为什么曾经是斜体？**
+A：旧版本把加粗标记写成 `{\b1\i1}`，`\i1` 就是斜体。现在只加粗（`{\b1}`），
+**不会再斜**。升级后如果还看到斜体，确认 `parse.lua` 里插的是 `{\\b1}`。
 
-**Q：后缀能不能不要方括号？**
-A：现在就是没有方括号的 `x12`。如果你看到的是 `[x12]`，说明用的是旧版本。
+**Q：后缀为什么是 `₍₁₂₎` 这种小字？**
+A：这是 pakku.js 的默认样式（`DANMU_SUBSCRIPT=on`），用下标数字加下标括号表示合并条数。
+本项目与它保持一致。想换成 `[x12]` 就把 `pakku_mark_subscript` 改成 `no`。
+
+**Q：标记能不能放在开头？**
+A：可以，`pakku_mark=prefix`，这就是 pakku.js 的原始默认位置。
 
 **Q：开了之后弹幕数量没变？**
 A：确认改的是 mpv 实际读取的那个 `uosc_danmaku.conf`。
@@ -373,13 +427,20 @@ A：滚动（1/2/3）、底部（4）、顶部（5）会参与合并。
    另外 `danmaku-history.json` 里的 `show_danmaku` 必须是 `true`
    （在 uosc 界面上点一下弹幕按钮切换即可）。
 
-4. **开日志文件**
+4. **标记显示成方框**
+
+   说明当前字体没有下标字形。用 `--msg-level=all=v` 启动，
+   在日志里搜 `Glyph` 看有没有 libass 的缺字形告警。
+   解决办法：`pakku_mark_subscript=no`，或换一个覆盖
+   Superscripts and Subscripts 区段的字体。
+
+5. **开日志文件**
 
    ```powershell
    mpv.exe --log-file=mpv.log "视频.mkv"
    ```
 
-5. **怀疑是 pakku 引起的卡顿或异常**
+6. **怀疑是 pakku 引起的卡顿或异常**
 
    把 `pakku_enable` 改成 `no` 对比一下。两者行为差异只应该在「合并了什么」上。
 
@@ -415,9 +476,9 @@ A：滚动（1/2/3）、底部（4）、顶部（5）会参与合并。
 
 | 集数 | 原始 | 合并后 | 最大合并 | 耗时 |
 |---|---|---|---|---|
-| 03 | 6592 | 4773 | x60 | ~306 ms |
-| 04 | 6702 | 4884 | x69 | ~314 ms |
-| 07 | 6792 | 4709 | x47 | ~307 ms |
+| 03 | 6592 | 4773 | ₍₆₀₎ | ~306 ms |
+| 04 | 6702 | 4884 | ₍₆₉₎ | ~314 ms |
+| 07 | 6792 | 4709 | ₍₄₇₎ | ~307 ms |
 
 耗时发生在**弹幕加载时**（一次性），播放过程中没有额外开销。
 拼音字典首次使用时懒加载约 60ms，之后常驻内存。
@@ -425,11 +486,12 @@ A：滚动（1/2/3）、底部（4）、顶部（5）会参与合并。
 
 ---
 
-## 13. 致谢
+## 13. 致谢与许可
 
 - [pakku.js](https://github.com/xmcp/pakku.js) —— 合并算法、拼音字典与默认配置的来源
 - [uosc_danmaku](https://github.com/Tony15246/uosc_danmaku) —— mpv 弹幕插件
 - [uosc](https://github.com/tomasklaen/uosc) —— UI 框架
-- [在 uosc_danmaku 中集成 pakkujs 弹幕合并算法](https://blog.episvr.top/2026/06/29/uosc_danmaku-pakkujs/) —— 本项目的需求来源
+- [在 uosc_danmaku 中集成 pakkujs 弹幕合并算法](https://blog.episvr.top/2026/06/29/uosc_danmaku-pakkujs/)
+  —— 本项目的需求来源（出处详见本文 §0）
 
 使用前请一并遵守上述项目的开源许可。
