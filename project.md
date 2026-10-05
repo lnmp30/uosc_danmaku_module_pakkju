@@ -751,12 +751,30 @@ MIT（uosc_danmaku）与 GPLv3 兼容，可并入 GPLv3 作品一起分发；
 | 调试残留（`_e2e*`、`_frames`、`_*.lua`） | 已排除，仓库中无残留 |
 | 第三方博客原文存档 | 已移出仓库（`.gitignore`），仅本地保留 |
 
-**仍存在于 git 历史中的两处，需要你决定是否处理：**
+### git 历史重写（2026-10-05 已完成）
 
-1. **提交者邮箱**：`git log --format='%an <%ae>'` 里的邮箱是提交时配置的 QQ 邮箱
-   （`lnmp30 <…@qq.com>`）已随提交公开在 GitHub 上。想换成 GitHub 的 noreply 邮箱需要重写历史
-   （`git filter-repo --email-callback` 或 BFG）后 `git push --force`。
-2. **第三方博客原文**：虽然已从最新提交移除，但它仍留在历史提交里。
-   若要彻底清除同样需要重写历史。
+首次推送后做过一次历史重写，处理掉两处已经进入历史的隐私 / 版权问题：
 
-两者都只影响历史，不影响当前工作树。
+| 问题 | 处理 |
+|---|---|
+| 提交者邮箱是个人 QQ 邮箱 | 全部 5 个提交的 author + committer 改为 `209313510+lnmp30@users.noreply.github.com` |
+| 第三方博客原文存档留在历史里 | 从全部 5 个提交中移除（该文件从未入库的最新状态也不再包含） |
+
+做法是**手工重建**，没有用 `git filter-branch`：
+
+- 用 `git cat-file commit` 取出原提交对象，按第一个空行切出原始信息
+- `git read-tree` 把原提交的 tree 装进索引 → `git rm --cached` 剔除博客存档 → `git write-tree`
+- 用 `GIT_AUTHOR_*` / `GIT_COMMITTER_*` 环境变量（时间、姓名原样，邮箱替换）调 `git commit-tree`
+
+之所以不用 `filter-branch`：它在 Windows 上把 filter 命令交给 `sh -c` 执行，
+中文路径要穿过 PowerShell → git → sh 三层，编码很容易出问题。
+
+重写结果逐项核对过：提交信息、作者名、作者时间、提交时间全部原样；
+每个提交相对旧版的 diff 只有那一个文件；最终 HEAD 的 tree 与重写前**完全相同**。
+
+**遗留注意事项：**
+
+- 强推**不会立刻**从 GitHub 服务端删掉旧提交对象。知道旧 SHA 的人在一段时间内仍能按
+  SHA 访问，网页缓存也可能还在。要彻底清除需要联系 GitHub Support，或者删库重建。
+- 本仓库的 `user.email` 已改成本地配置（`git config --local`），全局配置未动。
+  想在所有仓库统一，执行 `git config --global user.email "209313510+lnmp30@users.noreply.github.com"`。
