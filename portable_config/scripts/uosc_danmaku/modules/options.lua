@@ -27,6 +27,13 @@ options = {
     save_danmaku_path = "",
     -- 指定 save_danmaku_path 的应用范围：local / url / all
     save_danmaku_path_mode = "local",
+    -- 保存哪一步之后的弹幕：
+    --   raw      原始弹幕（只跳过被屏蔽的源），上游 save_danmaku 的原有行为
+    --   filtered 再额外去掉黑名单（blacklist_path）命中的
+    --   merged   再用 pakku 合并，即屏幕上实际显示的样子（文本带 (12) 标记）
+    --! merged 依赖渲染时算好的结果，所以要在弹幕已经显示过之后保存才有效；
+    --! 它存出来的是「快照」，下次当成本地弹幕加载即可复现同样的观感
+    save_danmaku_mode = "raw",
     -- 向 HTTP 请求时使用的 User Agent
     user_agent = "mpv_danmaku/1.0",
     -- 可选：向 HTTP 请求时使用的代理，默认禁用

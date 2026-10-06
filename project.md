@@ -14,15 +14,16 @@
 
 ## 1. 项目是什么
 
-### 1.1 两个功能
+### 1.1 三个功能
 
 本项目 = [uosc_danmaku](https://github.com/Tony15246/uosc_danmaku)（宿主，MIT）
-上的两部分增强，**互相独立**：
+上的三部分增强，**互相独立**：
 
 | # | 功能 | 核心文件 | 关键选项 | 代码默认 |
 |---|---|---|---|---|
 | 一 | **pakku 弹幕合并** | `modules/pakku.lua`（新增，1398 行） | `pakku_enable` | `no`（conf 里显式 `yes`） |
 | 二 | **无键盘支持** | `modules/menu.lua` + `modules/utils.lua` | `danmaku_auto_select` 等 3 项 | `yes` |
+| 三 | **保存过滤后的弹幕** | `modules/parse.lua` | `save_danmaku_mode` | `raw`（上游行为） |
 
 选项目录与用户视角的说明在 [`readme.md`](readme.md)；本文讲**为什么这么写**。
 
@@ -30,11 +31,13 @@
 
 | 文件 | 给谁 | 内容 |
 |---|---|---|
-| `readme.md` | 使用者 | 两个功能是什么、怎么装、**全部选项与默认值**、常见问题、排查 |
+| `readme.md` | 使用者 | 三个功能是什么、怎么装、**全部选项与默认值**、常见问题、排查 |
 | `project.md` | 改代码的人（本文） | 实现细节、数据结构、坑、验证方法、扩展指南、合规 |
 | `changelog.md` | 翻旧账的人 | 按版本记录「为什么改这一版」，含当时的日志证据 |
 | `THIRD-PARTY.md` | 分发的人 | 第三方组件与许可证全文位置 |
 | `test/auto_select_test.lua` | CI / 改功能二的人 | 自动选择逻辑的单测（47 项） |
+| `test/save_danmaku_test.lua` | CI / 改功能三的人 | 保存模式的单测（24 项） |
+| `test/docs_check.lua` | CI / 改任何选项的人 | 文档与代码的一致性检查（8 项） |
 
 ---
 
@@ -100,12 +103,22 @@
           modules/render.lua → mp.set_osd_ass() / uosc 层
 ```
 
+同时在**合并那一步之后**存了一份快照，供功能三导出：
+
+```
+   合并之后 ──► RENDERED_DANMAKU = danmakus          ★ 功能三
+                      │
+                      ▼
+   convert_danmaku_to_xml()：raw / filtered 现取，merged 用这份快照
+```
+
 **关键点**：`pakku.merge()` 的位置在**黑名单过滤之后、布局之前**，
 处理的是全部弹幕源的合并结果 —— 它替换的只是「合并」这一步，
 不碰时间轴、不碰渲染。
 
 功能二（无键盘）不在上面这条链路里，它作用在**链路之前**：
 帮你把弹幕**取回来**（搜索 → 选番剧 → 选集 → 拉取）。
+功能三在**链路之后**：把处理过的结果写回磁盘。
 
 ---
 
@@ -114,14 +127,14 @@
 | 文件 | 职责 | 本项目改动 | 属于 |
 |---|---|---|---|
 | `modules/pakku.lua` | — | **新增**，算法本体 | 一 |
-| `modules/options.lua` | 选项默认值 | 23 个 `pakku_*` + 3 个 `danmaku_*` | 一 + 二 |
-| `modules/parse.lua` | 解析/合并/生成 ASS | 合并分支、标记加粗与字号分支 | 一 |
+| `modules/options.lua` | 选项默认值 | 23 个 `pakku_*` + 3 个 `danmaku_*` + `save_danmaku_mode` | 一 + 二 + 三 |
+| `modules/parse.lua` | 解析/合并/生成 ASS/导出 xml | 合并分支、标记加粗与字号分支、**保存模式**、`RENDERED_DANMAKU` 快照 | 一 + 三 |
 | `main.lua` | 入口、事件、脚本消息 | `require("modules/pakku")`、一键搜索键绑定、**构建指纹** | 一 + 二 |
 | `modules/utils.lua` | 通用工具 | `trace_osd` `brief_error` `http_error_hint` `get_media_filename` `build_fingerprint` | 主要二 |
 | `modules/menu.lua` | 菜单/搜索/选择 | `danmaku-quick-search`、**自动选择**、流程日志、去重 | 二 |
 | `apis/dandanplay.lua` | 弹弹play 接口 | 失败原因上屏、日志级别提升 | 二 |
 | `apis/extra.lua` | 其它源 | 日志级别提升 | 二 |
-| `script-opts/uosc_danmaku.conf` | 用户配置 | pakku 段 + 无键盘段 | 一 + 二 |
+| `script-opts/uosc_danmaku.conf` | 用户配置 | pakku 段 + 无键盘段 + 保存段 | 一 + 二 + 三 |
 
 ---
 
@@ -455,7 +468,7 @@ uosc 的 `Menu.lua` 支持 `search_submit`，加上去就能让搜索菜单**打
 | `search-episodes-event` / `get-extra-event` | anime → 搜索列表 |
 | `open-latest-menu-anime` / `open-menu` | nav → **导航项，不参与选择** |
 
-> ⚠️ 这里踩过两次坑，详见 §9 的「列表类型判定」。
+> ⚠️ 这里踩过两次坑，详见 §10 的「列表类型判定」。
 
 **第二步：按类型挑**
 
@@ -467,7 +480,7 @@ uosc 的 `Menu.lua` 支持 `search_submit`，加上去就能让搜索菜单**打
 **集数从哪里来**：`pick_auto_item` 直接取 `parse_title()` 的 `season, episode`
 返回值，拿不到时才退回 `get_episode_number(get_media_filename())`。
 
-> ⚠️ 这里也有坑，见 §9 的「网盘串流」。
+> ⚠️ 这里也有坑，见 §10 的「网盘串流」。
 
 **打分公式**：
 
@@ -558,9 +571,144 @@ end
 
 ---
 
-## 7. 核心数据结构
+## 7. 功能三：保存过滤后的弹幕
 
-### 7.1 输入（uosc_danmaku 的弹幕条目）
+### 7.1 为什么需要
+
+上游的 `convert_danmaku_to_xml()` 直接从 `DANMAKU.sources` 取数据，**绕过了整条
+处理链**：不应用黑名单、不合并。也就是说存下来的和你看到的不是一回事，
+而且永远是条数最大的那一份（实测 6592 vs 合并后的 4768）。
+
+### 7.2 三种模式
+
+新增 `save_danmaku_mode`，取值与实现对应：
+
+| 模式 | 走哪套代码 | 条数（`[03]`） |
+|---|---|---|
+| `raw`（默认） | **上游原样实现**（`parse.lua`，逐字节未改） | 6592 |
+| `filtered` | 新模块 `collect(true)` | 6579 |
+| `merged` | 新模块 `collect_rendered()`，即 `RENDERED_DANMAKU` 快照 | 4768 |
+
+`merged` 是关键：`convert_danmaku_to_ass_events()` 在合并之后把结果存了一份：
+
+```lua
+-- ★ 放在空数组检查之前，免得为空时留着上一次的旧结果
+RENDERED_DANMAKU = danmakus
+```
+
+它是**浅拷贝引用**；保存时为新模块要排序，会另复制一份数组再排，
+不动缓存本身。条目里已经带了 `merge_count` / `merge_mark` / `merge_scale`，
+而 `pakku.merge()` 会把标记拼进 `text`（`pakku.lua:1337`），
+所以写出去的 xml 正文就是 `恭喜(12)` —— 和屏幕上一致。
+
+### 7.3 和上游怎么共存（本功能的设计重点）
+
+> 目标：**合并上游更新时不冲突**。按这个目标拆的：
+
+| 东西 | 放哪 | 为什么 |
+|---|---|---|
+| 新模式的全部实现 | **新文件** `modules/save_danmaku.lua` | 上游没有这个文件，永远不会冲突 |
+| 上游原实现 | `parse.lua` 里逐字节保留 | 上游改它内部时能自动合并 |
+| 转发 | `convert_danmaku_to_xml()` 开头 3 行 | 冲突面只有一个函数头 |
+| 快照赋值 | `convert_danmaku_to_ass_events()` 里 1 行 | 单行新增 |
+| 依赖注入 | `is_blacklisted()` 之后一次 `set_deps{}` | 见下 |
+
+**为什么需要依赖注入**：`black_patterns` 和 `make_delay_lookup` 是 `parse.lua`
+的 **local**，新模块拿不到。把它们提升成全局算「改上游代码」，
+所以改成由 `parse.lua` 主动传进去：
+
+```lua
+save_ext.set_deps({
+    get_sources       = function() return DANMAKU.sources end,
+    get_rendered      = function() return RENDERED_DANMAKU end,
+    black_patterns    = black_patterns,
+    is_blacklisted    = is_blacklisted,
+    make_delay_lookup = make_delay_lookup,
+})
+```
+
+`get_sources` / `get_rendered` 必须是 getter —— 这两个值会被**整体替换**
+（卸载时 `DANMAKU = {sources={}}`，渲染时 `RENDERED_DANMAKU = danmakus`），
+捕获引用会拿到旧表。
+
+> ⚠️ `set_deps` 必须放在 `is_blacklisted` 定义**之后**。它是全局函数，
+> 在此之前还是 `nil` —— 这个坑我踩过一次（注入到 nil，filtered 直接崩）。
+
+**转发 shim**：
+
+```lua
+function convert_danmaku_to_xml(danmaku_out)
+    local handled, result = save_ext.handle(danmaku_out)
+    if handled then return result end
+
+    -- ↓↓↓ 以下为上游原样实现，请勿改动 ↓↓↓
+    local danmakus = {}
+    ...
+```
+
+`handle()` 返回两个值：`handled=false` 表示「这次不归我管」（raw），
+调用方继续往下走；`handled=true` 表示已经处理完，`result` 是成败。
+这样 shim 只有两行，上游函数的头尾都不需要改。
+
+**标记约定**：`parse.lua` 里本项目新增/改动的地方都带 `★`，
+`grep '★' modules/parse.lua` 能一次列全（共 4 处）。
+
+### 7.4 本功能内部实现要点
+
+**排序只在新模式做**：`pairs(DANMAKU.sources)` 的顺序不确定，
+所以上游导出的行顺序每次都不一样。新模块统一按时间排序；
+`raw` **故意不排**，以保持和上游逐字节一致。
+
+**非法取值回退**：`normalize_mode()` 里除了 `filtered` / `merged` 一律当 `raw`，
+所以写错值不会导致保存失败，只是回到上游行为。先 `:lower()`，大小写不敏感。
+
+**失败要说话**：`merged` 还没渲染过时返回 `false` 并提示
+「还没有合并结果可保存，请先让弹幕显示一次」，不写空文件、也不写旧文件。
+（静默写错文件比不写更糟。）
+
+**没注入依赖不甩锅**：如果 `set_deps` 漏了，`handle()` 返回 `handled=true`
++ 明确报错，**不会**返回 `handled=false` 让上游去跑 —— 那样会静默存成 raw，
+比报错更难查。
+
+**提示带模式**：成功时写明模式和条数，排查时一眼看出模式有没有生效：
+
+```
+转换 XML 弹幕成功（merged，4768 条）：/path/to/xxx.xml
+```
+
+### 7.5 与上游行为的差异
+
+| 行为 | 上游 | 本项目 |
+|---|---|---|
+| `save_danmaku_mode` 缺席 / = `raw` | —— | **完全不变**（走的就是上游那段代码） |
+| `filtered` / `merged` 的行顺序 | —— | 按时间排序（新模式自己的行为） |
+| `filtered` / `merged` 的成功提示 | —— | 带 `（模式，N 条）` |
+| 自动保存遇到同名文件 | 跳过 | 不变 |
+
+> `raw` 的输出与上游**逐字节一致**，已用 `git show <加功能前的提交>` 取旧文件、
+> 逐字节比对验证（1983 字节 / 60 行全等）。
+
+### 7.6 已知限制
+
+- **`merged` 依赖渲染**：没有渲染过就没有快照。`on_unload`（自动保存）时
+  弹幕早就渲染过了，所以自动保存没问题；提前手动触发才会遇到。
+- **`merged` 存的是展示文本**：如果 `pakku_normalize_display=yes`（默认），
+  存下来的是**预处理并合并**之后的文本，不是原始文本。想要原文用 `filtered`。
+- **密度调控的结果没体现**：`pakku_shrink_threshold` / `pakku_drop_threshold`
+  作用在布局阶段（`merge_scale` 会被就地改小、`drop` 标记会被筛掉），
+  快照里存的是**合并后、调控前**的条目。真要在文件里体现丢弃，
+  得在 `adjust_density` 之后再存一次。
+- **xml 转义逻辑复制了一份**：新模块里的写出格式和上游一样（转义 + `<d p="...">`），
+  但代码是**复制**的 —— 复用就得改上游那个函数内部，那正是要避免的。
+  代价是上游若改了 xml 格式，新模块要跟着改（xml 格式由弹幕规范定死，实际不会动）。
+- **转义与解码是一对**：写出去之前把 `& < > " '` 换成实体，加载时
+  `decode_html_entities()`，两者配套所以往返一致，别只改一边。
+
+---
+
+## 8. 核心数据结构
+
+### 8.1 输入（uosc_danmaku 的弹幕条目）
 
 ```lua
 { time = 12.345, type = 1, size = 25, color = 0xFFFFFF, text = "我是一条弹幕", orig_time = 12.345 }
@@ -569,7 +717,7 @@ end
 `type`：1/2/3 滚动，4 底部，5 顶部，6 逆向，7 高级，8/9 代码/BAS。
 默认只合并 `{1,2,3,4,5}`（`DEFAULT_MERGE_TYPES`），其它类型原样透传。
 
-### 7.2 中间结构 `ir`（对应 C++ 的 `DanmuCacheline`）
+### 8.2 中间结构 `ir`（对应 C++ 的 `DanmuCacheline`）
 
 `M.build_ir(d, cfg)` 产出，所有可复用的中间量在这里预计算，避免聚类时重复算：
 
@@ -589,14 +737,14 @@ end
 }
 ```
 
-### 7.3 簇 `cluster`
+### 8.3 簇 `cluster`
 
 ```lua
 { time_ms = 代表时间, irs = {ir, ...}, reasons = {"orig","edit",...},
   dists = {...}, weak_reason = "edit" }
 ```
 
-### 7.4 输出（`M.merge` 的返回值）
+### 8.4 输出（`M.merge` 的返回值）
 
 在原始字段之外新增：
 
@@ -614,7 +762,7 @@ end
 - `merge_mark` 用于把标记加粗 —— 用明文比对定位（先试末尾、再试开头），
   不依赖正则，所以换标记样式不需要动渲染层
 
-### 7.5 菜单项（功能二用）
+### 8.5 菜单项（功能二用）
 
 ```lua
 {
@@ -629,7 +777,7 @@ end
 
 ---
 
-## 8. 配置流转
+## 9. 配置流转
 
 ```
 script-opts/uosc_danmaku.conf       用户写的值（注释掉就不生效）
@@ -664,9 +812,9 @@ M.normalize / M.check_similar / enlarge_scale / adjust_density 等
 
 ---
 
-## 9. 踩过的坑
+## 10. 踩过的坑
 
-### 9.1 Lua 语言层
+### 10.1 Lua 语言层
 
 #### Lua 模式的字符类按字节匹配 ⚠️
 
@@ -704,7 +852,7 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 | 裸 `pcall` 吞异常 | `pcall(do_final_update)` 出错零输出，现象和网络失败无法区分（日志停在 ④ 然后什么都没有）。现在统一走 `finish()`，出错会 `msg.error` + OSD |
 | `mp.get_time()` | 实测**暂停时仍按真实时间前进**（暂停 2 秒差 2.000），去重窗口不会被暂停冻住 |
 
-### 9.2 列表类型判定（功能二）⚠️
+### 10.2 列表类型判定（功能二）⚠️
 
 判「这是剧集列表还是搜索列表」踩了两次：
 
@@ -719,7 +867,7 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 且额外限制「整串 ≤ 12 字节、数字 ≤ 3 位」（一集番剧不会超过 999），
 避免年份再次混进来。
 
-### 9.3 网盘串流取不到集数（功能二）⚠️
+### 10.3 网盘串流取不到集数（功能二）⚠️
 
 `pick_auto_item()` 原来用 `mp.get_property("filename/no-ext")`，
 但安卓上播网盘串流时 `path` 是 `network://…`，`filename` 只是一串
@@ -734,7 +882,7 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 > **本来就是好的** —— `format_filename("… BOCCHI THE ROCK! [01][Ma10p…]")`
 > 得到 `BOCCHI THE ROCK E01`，集数 01 正常。问题只出在输入是 fileId。
 
-### 9.4 重复选择：三个不同的来源
+### 10.4 重复选择：三个不同的来源
 
 一共修了三次，因为**每次的成因都不一样**，值得记下来：
 
@@ -748,7 +896,7 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 **诊断技巧**：两次的**条数不一样**（2 条 vs 3 条）说明不是同一份列表
 （3 条 = `加载数据中…` 占位 + 2 条结果）；条数一样则多半是同一份被判了两次。
 
-### 9.5 其它
+### 10.5 其它
 
 | 坑 | 说明 |
 |---|---|
@@ -763,27 +911,41 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 
 ---
 
-## 10. 开发与验证
+## 11. 开发与验证
 
-### 10.1 功能二：单测（秒级）
+### 11.1 功能二 / 功能三：单测（秒级）
 
 ```bash
 luajit test/auto_select_test.lua     # 通过 47，失败 0
+luajit test/save_danmaku_test.lua    # 通过 27，失败 0
 ```
 
-测试**直接从 `menu.lua` / `utils.lua` 里按标记切出真实代码**来跑（`slice()`），
-不复制实现 —— 这样实现改了而测试没跟上时会直接失败，而不是拿一份过时的副本
-自欺欺人。
+两个测试都**直接从 `menu.lua` / `utils.lua` / `parse.lua` 里按标记切出真实代码**
+来跑（`slice()`），不复制实现 —— 这样实现改了而测试没跟上时会直接失败，
+而不是拿一份过时的副本自欺欺人。
 
-覆盖：`get_media_filename`、`hint_episode_number`（含「年份不算集数」）、
-`item_command_kind`、`looks_like_episode_list`、`pick_auto_item`
-（剧集/导航项/搜索列表/未知 value）、连按去重（含 A→B→A）、跨入口去重、
-收尾只跑一次、「先到先显示」抑制。
+`auto_select_test.lua` 覆盖：`get_media_filename`、`hint_episode_number`
+（含「年份不算集数」）、`item_command_kind`、`looks_like_episode_list`、
+`pick_auto_item`（剧集/导航项/搜索列表/未知 value）、连按去重（含 A→B→A）、
+跨入口去重、收尾只跑一次、「先到先显示」抑制。
 
-**测试抓过两个我自己写出来的 bug**（见 §9.2 和 §9.5 的「双守卫」）。
+`save_danmaku_test.lua` 覆盖：`normalize_mode` 的各种取值、**`raw` 时必须返回
+`handled=false` 把活让回上游**、`filtered` 过滤黑名单、`merged` 用快照且保留
+`(12)` 标记、按时间排序、XML 转义、快照为空时不瞎存、所有源被屏蔽时的提示、
+没注入依赖时明确报错（而不是静默甩给上游）。
+
+`docs_check.lua` 是**文档一致性**检查（8 项）：选项覆盖、默认值逐值比对、
+文档引用的函数名是否存在、目录锚点、表格列数、章节编号连续。
+**加选项或改默认值之后要跑它**，否则文档会悄悄和代码脱节。
+
+**测试抓过两个我自己写出来的 bug**（见 §10.2 和 §10.5 的「双守卫」）。
 建议每加一条判定就补一条用例。
 
-### 10.2 功能一：纯 Lua 单测（秒级）
+> `slice()` 找终点标记时是从**起点之后**开始找的。踩过坑：注释里提到了
+> 同一个函数名，从文件头找就把注释当成了终点，切出来的片段是空的。
+> 两个测试文件里都做了这个防护。
+
+### 11.2 功能一：纯 Lua 单测（秒级）
 
 `pakku.lua` 不依赖 mpv 也能跑：
 
@@ -814,7 +976,7 @@ luajit test/auto_select_test.lua     # 通过 47，失败 0
 | `mark=off` | `merge_mark == ""`，文本保持 `恭喜` |
 | 未合并的单条且正文以 `x12` 结尾 | `merge_count == 1`、`merge_mark == ""`、`text` 保持原文 |
 
-### 10.3 真实弹幕压测
+### 11.3 真实弹幕压测
 
 工作区自带 3 集弹幕（合计 20086 条），跑一遍确认合并数量和耗时：
 
@@ -828,7 +990,7 @@ luajit test/auto_select_test.lua     # 通过 47，失败 0
 期望的 top 结果形态：`？？？？？？？(60)`、`kksk(46)`、`👍...👍(69)`、`波门(47)`
 这类刷屏弹幕。
 
-### 10.4 端到端跑 mpv
+### 11.4 端到端跑 mpv
 
 **功能一的自动加载有两个前置条件**，缺一个就什么都不发生：
 
@@ -857,7 +1019,7 @@ $env:MPV_HOME="$PWD\_e2ecfg"
 ```
 
 **功能二**的端到端：让脚本自己去 `MPV_HOME/scripts/<名字>/main.lua` 加载
-（不要用 `--script=` 指定文件，见 §9.5），再加一个只负责发消息的触发脚本：
+（不要用 `--script=` 指定文件，见 §10.5），再加一个只负责发消息的触发脚本：
 
 ```lua
 mp.register_event("file-loaded", function()
@@ -912,7 +1074,30 @@ dump 到文件，检查标记格式与字号。下面是**默认模式**（普�
 > 控制，上限 100）；只有下标模式标记才有独立的 `\fs`，且会超过 100
 > （如 `\fs130`），属正常。默认模式 `(12)` 没有独立字号。
 
-### 10.5 语法检查（改任何 Lua 后必跑）
+**功能三的端到端**：用同一套 `testdata` 弹幕，把三种模式各跑一遍并数条目数。
+视频与 xml 同名（`autoload_local_danmaku` 的要求），触发用
+`script-message immediately_save_danmaku`（自动保存会因为同名文件已存在而跳过）：
+
+```
+mode=raw       6592 条   日志是「转换 XML 弹幕成功： <路径>」← 上游原样提示
+mode=filtered  6579 条   （blacklist_path 里放了「簽到」，命中 13 条）
+mode=merged    4768 条   （含 791 条带 (N) 标记，按时间有序，无裸 &）
+```
+
+**`raw` 那一行是判断 shim 有没有写对的关键**：它的提示**不带** `（模式，N 条）`，
+说明走的是上游那段代码，而不是新模块。
+
+还做了一次更硬的验证：用 `git show <加功能之前的提交>` 取旧版 `parse.lua`，
+把两边的 `convert_danmaku_to_xml()` 函数体抽出来逐字节比对 ——
+**1983 字节 / 60 行全等**，证明上游实现确实原封不动。
+
+这条路径能真跑通，所以**不要**只靠单测：单测用的是桩数据，
+而这里能验到「渲染时确实填了 `RENDERED_DANMAKU`」这个集成点。
+
+> 沙箱里 mpv 的 subprocess 被拦（起不了 curl），但**本地 xml 不需要网络**，
+> 所以功能三能完整跑通；功能二的联网那一段仍然只能靠设备实测。
+
+### 11.5 语法检查（改任何 Lua 后必跑）
 
 ```powershell
 Get-ChildItem -Recurse portable_config\scripts -Filter *.lua | ForEach-Object {
@@ -922,7 +1107,7 @@ Get-ChildItem -Recurse portable_config\scripts -Filter *.lua | ForEach-Object {
 
 ---
 
-## 11. 扩展指南
+## 12. 扩展指南
 
 ### 功能一
 
@@ -933,7 +1118,7 @@ Get-ChildItem -Recurse portable_config\scripts -Filter *.lua | ForEach-Object {
 3. 若需要新的预计算量，加进 `M.build_ir()`（`pakku.lua:886`）
 4. 在 `dominant_reason()` 的 `rank` 表里给新 reason 一个权重
 5. 在 `stats` 表里加同名字段，`M.merge()` 会自动统计
-6. 若要有独立开关，按 §8 的 4 处套路加选项
+6. 若要有独立开关，按 §9 的 4 处套路加选项
 
 #### 换掉 / 更新拼音字典
 
@@ -1019,7 +1204,7 @@ tag = tag .. "}"
 
 ---
 
-## 12. 待办
+## 13. 待办
 
 - [ ] 把 pakku 选项接进 uosc 菜单（`modules/menu.lua`），支持运行时切换
 - [ ] 给 `M.merge()` 加增量/分块处理，避免超长视频（>3 万条）一次性聚类
@@ -1029,12 +1214,20 @@ tag = tag .. "}"
       （现在只是去重后续命令，请求本身仍会白发一次）
 - [ ] 把 `AUTO_SELECT_NOISE_RULES` 挪到 `uosc_danmaku.conf`，让用户能自己加词
 - [ ] 给 `build_fingerprint` 加一个「哪个文件变了」的输出，目前只有合并哈希
+- [ ] 功能三：`merged` 存的是「合并后、密度调控前」的快照，
+      想让 xml 里也体现 `pakku_drop_threshold` 丢掉的那些，得挪到
+      `adjust_density` 之后再存
+- [ ] 功能三：可以考虑再存一份 json（带 `merge_count` / `merge_reason`），
+      方便做合并质量的统计分析，xml 格式塞不下这些元数据
+- [ ] 功能三：`filtered` / `merged` 的 xml 写出格式是从上游**复制**的，
+      上游若改了格式这里要手动同步 —— 目前靠 `README` 和注释提醒，
+      可以考虑加一条测试比对两边生成的 xml 结构
 
 ---
 
-## 13. 许可与合规
+## 14. 许可与合规
 
-### 13.1 结论：本项目整体 GPL-3.0
+### 14.1 结论：本项目整体 GPL-3.0
 
 | 组件 | 许可证 | 是否随仓库分发 |
 |---|---|---|
@@ -1057,13 +1250,13 @@ MIT（uosc_danmaku）与 GPLv3 兼容，可并入 GPLv3 作品一起分发；
 > **功能二（无键盘支持）本身不涉及 pakku.js**，是独立写的，但它和
 > `pakku.lua` 在同一个仓库、同一份分发物里，所以整体仍是 GPL-3.0。
 
-### 13.2 分发时的义务
+### 14.2 分发时的义务
 
 1. 保留 `LICENSE` 与 `portable_config/scripts/uosc_danmaku/LICENSE`
 2. 保留 `THIRD-PARTY.md`（或等效的第三方声明）
 3. 修改 GPL 部分后需一并提供修改后的源码
 
-### 13.3 隐私自查（每次入库前建议重跑）
+### 14.3 隐私自查（每次入库前建议重跑）
 
 | 检查项 | 结果 |
 |---|---|
@@ -1086,7 +1279,7 @@ git grep -nEI "[A-Z]:\\\\Users|/Users/|/home/[a-z]|AppData" -- .
 
 （`iskolbin` / `ikaros` 是上游第三方库作者的署名，属正常。）
 
-### 13.4 git 历史重写（2026-10-05 已完成）
+### 14.4 git 历史重写（2026-10-05 已完成）
 
 首次推送后做过一次历史重写，处理掉两处已经进入历史的问题：
 
@@ -1136,7 +1329,7 @@ git grep -nEI "[A-Z]:\\\\Users|/Users/|/home/[a-z]|AppData" -- .
 | `已解析 N 条弹幕` 条数明显少于弹幕总数 | pakku 合并生效 | §5 |
 | `已解析` 完全不出现 | 弹幕没加载成功 | §3 链路、`readme.md` 排查 |
 | `pakku: 拼音字典载入 6763 个汉字 / 398 个拼音组` | 合并被调用了 | §5 |
-| 这条都没有 | `pakku_enable` 没生效或 conf 编码不是 UTF-8 | §8 |
+| 这条都没有 | `pakku_enable` 没生效或 conf 编码不是 UTF-8 | §9 |
 | `uosc_danmaku+pakku 2.2.0 build X/Y/Z` | 构建指纹 | §6.5；**对不上就是文件没拷全** |
 | `[flow] ①`~`④` 后什么都没有 | 卡在「选番剧」 | §6.3 |
 | `[flow] ⑤ 显示键盘列表` | 没装 uosc，弹的是纯键盘列表 | §6.3，开 `danmaku_auto_select` |
@@ -1147,7 +1340,13 @@ git grep -nEI "[A-Z]:\\\\Users|/Users/|/home/[a-z]|AppData" -- .
 | `HTTP 请求失败：Exit code: -2` + `0 0 0 0` | **不是网络错误**，请求被自己掐掉了 | §6.4 |
 | `exit -3 子进程没起来` | mpv 调不起 curl（安卓常见） | `readme.md` 排查 |
 | `该集弹幕内容为空（服务器 / 剧集 N）` | 那集在那个服务器上确实没弹幕 | §6.3，多半是选中了特番 |
-| `搜索结果处理出错：…` | 收尾过程抛异常（以前会被静默吞掉） | §9.1 |
-| `搜索结果处理出错` 里带 `attempt to index global 'msg'` | `utils.lua` 少了 `require("mp.msg")` | §9.1 |
+| `搜索结果处理出错：…` | 收尾过程抛异常（以前会被静默吞掉） | §10.1 |
+| `搜索结果处理出错` 里带 `attempt to index global 'msg'` | `utils.lua` 少了 `require("mp.msg")` | §10.1 |
 | 下标标记显示成方框 | 字体缺 `U+2080-2089` 字形 | 用默认的 `(12)`，§5.4 |
-| 合并标记是斜体 | ASS 标签里误带了 `\i1` | §9.5 |
+| 合并标记是斜体 | ASS 标签里误带了 `\i1` | §10.5 |
+| `转换 XML 弹幕成功（模式，N 条）` | 保存成功，**模式写在这里** | §7 |
+| 存出来的条数和弹幕总数一样、没有 `(12)` | `save_danmaku_mode` 还是 `raw` | §7.2 |
+| 黑名单没生效在存出来的文件里 | 模式是 `raw`（raw 不过滤黑名单） | §7.2 |
+| `还没有合并结果可保存，请先让弹幕显示一次` | `merged` 依赖渲染快照 | §7.3 |
+| `已存在同名弹幕文件：…` | 自动保存不覆盖已有文件 | 手动发 `immediately_save_danmaku` |
+| `此弹幕文件不支持保存至本地` | 网络串流且没设 `save_danmaku_path` | `readme.md` 其余选项 |

@@ -1,16 +1,18 @@
 # uosc_danmaku_module_pakkju
 
-**在 mpv 弹幕插件 [uosc_danmaku](https://github.com/Tony15246/uosc_danmaku) 上做的两个独立增强。**
+**在 mpv 弹幕插件 [uosc_danmaku](https://github.com/Tony15246/uosc_danmaku) 上做的三个独立增强。**
 
 | # | 功能 | 解决什么 | 面向谁 | 开关 |
 |---|---|---|---|---|
 | **一** | **pakku 弹幕合并** | 同一句话被几百人重复发、还各带错别字和谐音，自带合并认不出来 | 所有人（桌面 / 安卓都一样） | `pakku_enable` |
 | **二** | **无键盘支持** | 安卓 mpv / 遥控器 / 手柄没有键盘，搜索框打不了字、结果列表选不了 | 主要面向安卓 | `danmaku_auto_select` 等 3 项 |
+| **三** | **保存过滤后的弹幕** | 上游的「保存弹幕」只能存**原始**弹幕，存不到过滤/合并之后的结果 | 想归档或分享的人 | `save_danmaku_mode` |
 
-两个功能**互不相干**，可以只用一个：
+三个功能**互不相干**，可以只用其中一个：
 
 - 只在电脑上看番 → 只需要**功能一**（覆盖脚本即可，什么配置都不用改）
-- 只在安卓上折腾 → 两个都建议开，但**功能二**才是关键
+- 只在安卓上折腾 → 三个都建议开，但**功能二**才是关键
+- 想把「我看到的弹幕」存下来 → 只要**功能三**
 
 > 本文只讲怎么用。合并算法的原理（编辑距离、拼音距离、余弦相似度、
 > 滑动窗口聚类）见文末的出处博客。
@@ -31,6 +33,11 @@
   - [一键搜索怎么触发](#一键搜索怎么触发)
   - [自动选择是怎么挑的](#自动选择是怎么挑的)
   - [无键盘选项全表（3 项）](#无键盘选项全表3-项)
+- [功能三：保存过滤后的弹幕](#功能三保存过滤后的弹幕)
+  - [三种模式](#三种模式)
+  - [怎么用](#怎么用)
+  - [保存选项全表（1 项）](#保存选项全表1-项)
+  - [和上游代码是怎么共存的](#和上游代码是怎么共存的)
 - [安装](#安装)
 - [其余选项（上游 uosc_danmaku 的）](#其余选项上游-uosc_danmaku-的)
 - [默认值对照：代码 vs 本仓库 conf](#默认值对照代码-vs-本仓库-conf)
@@ -395,6 +402,94 @@ danmaku_auto_select=no
 
 ---
 
+# 功能三：保存过滤后的弹幕
+
+uosc_danmaku 本来就有 `save_danmaku`，但它存的是**原始**弹幕 ——
+只跳过被屏蔽的源，不应用黑名单、不合并。也就是说你存下来的和你看到的
+不是一回事，而且条数是最大的那一份。
+
+本功能加了一个 `save_danmaku_mode`，让你选存哪一步之后的。
+
+## 三种模式
+
+| 模式 | 存的是 | 实测条数（`[03]` 一集） | 带 `(12)` 标记 |
+|---|---|---|---|
+| `raw`（默认） | 各源的原始条目，只跳过被屏蔽的源 —— **上游原有行为** | 6592 | 否 |
+| `filtered` | 再去掉黑名单命中的 | 6579（屏蔽了「簽到」13 条） | 否 |
+| `merged` | 再经 pakku 合并，**即屏幕上实际显示的样子** | **4768** | **是** |
+
+`merged` 存的是**快照**：文件里就是那条 `恭喜(12)`，重新加载观看体验和当时完全一致，
+不用再合并一遍，条数也少得多（省 28%）。
+
+> 想知道黑名单到底屏蔽了哪几条、或想拿一份「没合并过但已清理」的完整弹幕，
+> 用 `filtered`。
+
+## 怎么用
+
+```ini
+save_danmaku=yes
+save_danmaku_mode=merged
+```
+
+存到哪：默认视频同目录，文件名 `<视频名>.xml`（和 `autoload_local_danmaku`
+认的名字一致，所以下次直接就能被加载）。想换个目录用 `save_danmaku_path`。
+
+两种触发方式：
+
+| 方式 | 时机 |
+|---|---|
+| 自动 | 播放结束 / 退出 mpv 时（需要 `save_danmaku=yes`） |
+| 手动 | 随时执行 `script-message immediately_save_danmaku` |
+
+> ⚠️ **`merged` 必须在弹幕已经显示过之后保存**，因为它用的是渲染时算好的结果。
+> 如果那一刻还没有结果，会提示「还没有合并结果可保存，请先让弹幕显示一次」，
+> 不会写出一个错的文件。
+>
+> ⚠️ 自动保存遇到**同名文件已存在**时会跳过（上游行为）。想覆盖就用手动触发。
+
+保存成功会提示条数和模式：
+
+```
+[uosc_danmaku] 转换 XML 弹幕成功（merged，4768 条）：/path/to/xxx.xml
+```
+
+## 保存选项全表（1 项）
+
+| 选项 | 默认值 | 本仓库 | 说明 |
+|---|---|---|---|
+| `save_danmaku_mode` | `raw` | `raw` | 保存哪一步之后：`raw` / `filtered` / `merged`。**本项目新增**；取值非法时回退到 `raw` |
+
+配套的（上游原有，详见[其余选项](#其余选项上游-uosc_danmaku-的)）：
+`save_danmaku`、`save_danmaku_path`、`save_danmaku_path_mode`。
+
+## 和上游代码是怎么共存的
+
+这一段是给**要合并上游更新的人**看的。
+
+`raw` 走的是**上游那段代码原样**（`parse.lua` 里 `convert_danmaku_to_xml()`
+的原有实现，逐字节未改，已用 `git show` 对比验证过）。
+`filtered` / `merged` 的实现放在**单独一个新文件** `modules/save_danmaku.lua`
+—— 上游没有这个文件，所以永远不会冲突。
+
+`parse.lua` 里对本功能只有三处极小改动，都带 `★` 标记，`grep '★'` 就能找全：
+
+| 位置 | 改动 |
+|---|---|
+| 文件头 | 一行 `require("modules/save_danmaku")` |
+| `is_blacklisted` 定义之后 | 一次 `set_deps{}`，把上游的局部件注入给新模块 |
+| `convert_danmaku_to_xml()` 开头 | 一个 3 行的转发；**下面是上游原样实现** |
+| `convert_danmaku_to_ass_events()` 里 | 一行 `RENDERED_DANMAKU = danmakus`（存快照） |
+
+所以合并上游时：上游改 `convert_danmaku_to_xml()` 的内部不会和本项目冲突
+（它在 `↓↓↓ 以下为上游原样实现 ↓↓↓` 标记之下）；要改也只改新文件。
+
+> **一个已知差异**：新模式的输出**按时间排序**，而 `raw` 沿用上游的
+> 「不定序」（`pairs(DANMAKU.sources)` 的顺序不稳定）。
+> 这是刻意的 —— `raw` 要保证和上游逐字节一致。想要排序好的完整弹幕，
+> 用 `filtered`。
+
+---
+
 # 安装
 
 ## 方式一：整包覆盖（推荐）
@@ -428,9 +523,10 @@ danmaku_auto_select=no
 | 文件 | 改动 | 属于哪个功能 |
 |---|---|---|
 | `modules/pakku.lua` | **新增**，算法本体（约 1400 行） | 功能一 |
-| `modules/parse.lua` | 合并分支、标记加粗与字号处理 | 功能一 |
-| `modules/options.lua` | 23 个 `pakku_*` + 3 个 `danmaku_*` 选项默认值 | 两者 |
-| `main.lua` | `require("modules/pakku")`、一键搜索键绑定、构建指纹 | 两者 |
+| `modules/save_danmaku.lua` | **新增**，保存模式的实现（上游没有这个文件，合并上游不冲突） | 功能三 |
+| `modules/parse.lua` | 合并分支、标记加粗与字号处理；保存模式**只加了一个转发**，上游实现原样保留 | 功能一 + 三 |
+| `modules/options.lua` | 23 个 `pakku_*` + 3 个 `danmaku_*` + 1 个 `save_danmaku_*` 选项默认值 | 全部 |
+| `main.lua` | `require("modules/pakku")`、一键搜索键绑定、构建指纹 | 功能一 + 二 |
 | `modules/utils.lua` | `trace_osd` / `http_error_hint` / `get_media_filename` 等 | 主要功能二 |
 | `modules/menu.lua` | `danmaku-quick-search`、自动选择、流程日志 | 功能二 |
 | `apis/dandanplay.lua` | 失败原因提示、日志级别 | 功能二 |
@@ -460,7 +556,7 @@ danmaku_auto_select=no
 | `autoload_local_danmaku` | `no` | ⚠️ `yes` | 自动加载**本地**同名 `.xml` 弹幕 |
 | `autoload_for_url` | `no` | ⚠️ `yes` | 为 URL 串流场景自动加载弹幕（配合播放列表） |
 | `auto_fallback_search` | `no` | `no` | 自动加载失败时自动弹出搜索框 |
-| `save_danmaku` | `no` | `no` | 播放结束时把弹幕保存为 xml |
+| `save_danmaku` | `no` | `no` | 播放结束时把弹幕保存为 xml。存**哪一步之后**由 [功能三](#功能三保存过滤后的弹幕) 的 `save_danmaku_mode` 决定 |
 | `save_danmaku_path` | `""` | `""` | 弹幕保存目录。空 = 视频同目录（目录需自己先建） |
 | `save_danmaku_path_mode` | `local` | `local` | `save_danmaku_path` 的应用范围：`local` / `url` / `all` |
 | `history_path` | `~~/danmaku-history.json` | ⚠️ `~~/files/danmaku-history.json` | 弹幕关联历史文件路径 |
@@ -631,6 +727,24 @@ autoload_local_danmaku=yes
 把 `<视频同名>.xml` 放在视频同目录即可。仓库 `testdata/` 里那三集 xml 就是按这个
 命名规则放的，可直接拿安卓上用。注意时长需 ≥ 60 秒。
 
+## 把「我看到的弹幕」存下来（带合并结果）
+
+```ini
+save_danmaku=yes
+save_danmaku_mode=merged
+```
+
+存出来的就是屏幕上那个样子（条数少 27%，带 `(12)` 标记），
+下次当成本地弹幕加载就能复现。详见[功能三](#功能三保存过滤后的弹幕)。
+
+## 只想要一份「清理过但没合并」的完整弹幕
+
+```ini
+save_danmaku=yes
+save_danmaku_mode=filtered
+blacklist_path=/path/to/black.txt
+```
+
 ---
 
 # 常见问题
@@ -669,6 +783,22 @@ autoload_local_danmaku=yes
 
 **Q：搜索能用，但列表弹出来选不了（`选择:` 那个框）。**
 说明没装 uosc，走的是 `mp.input` 的**纯键盘**列表。开 `danmaku_auto_select=yes`。
+
+**Q：保存弹幕时提示「还没有合并结果可保存」。**
+`save_danmaku_mode=merged` 用的是渲染时算好的结果，得等弹幕**显示过之后**再存。
+如果你在弹幕加载出来之前就触发了保存，等几秒再试；一直这样说明弹幕压根没加载成功
+（先按[排查问题](#排查问题)看 `已解析` 有没有出现）。
+
+**Q：`save_danmaku=yes` 了，但退出时没存。**
+自动保存遇到**同名文件已存在**会跳过（上游行为）。想覆盖就手动触发一次：
+
+```
+script-message immediately_save_danmaku
+```
+
+**Q：存出来的 `.xml` 里为什么有 `(12)` 这样的字？**
+那是 `save_danmaku_mode=merged` 的合并标记，和屏幕上显示的一致 —— 这是**故意**的，
+重新加载观看体验才和当时一样。不想要就用 `filtered` 模式。
 
 **Q：支持哪些弹幕类型？**
 滚动（1/2/3）、底部（4）、顶部（5）参与合并。逆向（6）、高级（7）、
@@ -801,11 +931,39 @@ msg-level=all=info,uosc_danmaku=v
 
 ```bash
 luajit test/auto_select_test.lua     # 通过 47，失败 0
+luajit test/save_danmaku_test.lua    # 通过 27，失败 0
+luajit test/docs_check.lua           # 通过 8，失败 0
 ```
 
-覆盖自动选择的全部判定逻辑（列表类型识别、集数匹配、导航项跳过、
-跨入口去重、收尾只跑一次）。测试直接从 `menu.lua` 里切真实代码来跑，
-所以实现改了测试没跟上会立刻失败。
+- `auto_select_test.lua` 覆盖自动选择的全部判定逻辑（列表类型识别、集数匹配、
+  导航项跳过、跨入口去重、收尾只跑一次）
+- `save_danmaku_test.lua` 覆盖三种模式各自取哪些条目、（`raw` 时必须**让回给上游**）、
+  `merged` 用快照且保留标记、按时间排序、XML 转义、非法取值回退、没注入依赖时的报错
+- `docs_check.lua` **核对文档和代码是否还对得上**：`options.lua` 里每个选项是不是
+  都在 readme 里写了、readme 里写的默认值和代码是否一致、文档引用的函数名是否
+  真实存在、目录锚点和表格是否有效
+
+前两个测试都**直接从 `menu.lua` / `parse.lua` 里切真实代码来跑**，
+所以实现改了测试没跟上会立刻失败。**加选项或改默认值之后请跑一下
+`docs_check.lua`** —— 它专门盯「代码改了文档忘了改」。
+
+## 9. 保存出来的弹幕不对
+
+先看日志里的这一行，它会写明**模式和条数**：
+
+```
+[uosc_danmaku] 转换 XML 弹幕成功（merged，4775 条）：/path/to/xxx.xml
+```
+
+对照下面判断：
+
+| 现象 | 原因 |
+|---|---|
+| 条数和弹幕总数一样，没有 `(12)` | 模式还是 `raw`（默认值），改成 `merged` |
+| 条数没变，但黑名单没生效 | `blacklist_path` 没配对，或模式是 `raw`（raw 不过滤黑名单） |
+| 提示「还没有合并结果可保存」 | `merged` 需要在弹幕显示过之后保存 |
+| 提示「已存在同名弹幕文件」 | 自动保存不覆盖已有文件，手动触发 `immediately_save_danmaku` |
+| 提示「此弹幕文件不支持保存至本地」 | 播的是网络串流且没设 `save_danmaku_path` |
 
 ---
 
@@ -855,6 +1013,15 @@ danmaku_auto_select=no
 
 回到「弹列表让你选」，桌面装了 uosc 的话可以正常用。
 
+## 只关功能三（保存过滤后的弹幕）
+
+```ini
+save_danmaku_mode=raw
+```
+
+回到上游原有的保存行为（存原始弹幕）。想连保存本身也关掉就
+`save_danmaku=no`。
+
 ## 完全卸载
 
 删掉 `scripts/uosc_danmaku/modules/pakku.lua`，并把其余文件里的相关代码去掉
@@ -878,7 +1045,8 @@ danmaku_auto_select=no
 
 算法的原理推导（编辑距离、拼音距离、余弦相似度、滑动窗口聚类）请看原文。
 
-> 功能二（无键盘支持）不是这篇博客的内容，是本项目后续为安卓场景加的。
+> 功能二（无键盘支持）和功能三（保存过滤后的弹幕）不是这篇博客的内容，
+> 是本项目后续加的。
 
 ## 致谢
 

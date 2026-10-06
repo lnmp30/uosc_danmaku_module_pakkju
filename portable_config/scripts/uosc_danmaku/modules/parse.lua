@@ -3,6 +3,7 @@ local utils = require 'mp.utils'
 local s2t   = require("dicts/s2t_chars")
 local t2s   = require("dicts/t2s_chars")
 local pakku = require("modules/pakku")
+local save_ext = require("modules/save_danmaku")   -- ★ 本项目新增
 
 local function ass_escape(text)
     return text:gsub("\\", "\\\\")
@@ -122,6 +123,11 @@ end
 local blacklist_file = mp.command_native({ "expand-path", options.blacklist_path })
 local black_patterns = load_blacklist_patterns(blacklist_file)
 
+-- 最近一次渲染用的弹幕数组（黑名单过滤 + 合并之后，带 merge_count / merge_mark / merge_scale）。
+-- ★ 本项目新增：由 convert_danmaku_to_ass_events 每次渲染时覆盖，
+-- 供 save_danmaku_mode=merged 保存快照用。
+RENDERED_DANMAKU = {}
+
 -- 检查字符串是否在黑名单中
 function is_blacklisted(str, patterns)
     for _, pattern in ipairs(patterns) do
@@ -137,6 +143,18 @@ function is_blacklisted(str, patterns)
     end
     return false
 end
+
+-- ★ 本项目新增：给 modules/save_danmaku.lua 注入它拿不到的东西。
+-- black_patterns / make_delay_lookup 是本文件的 local；与其把它们提升成全局
+-- （那算改上游代码），不如主动传过去。两个 getter 是因为对应值会被整体替换。
+--! 必须放在 is_blacklisted 定义**之后** —— 它是全局函数，在此之前还没赋值。
+save_ext.set_deps({
+    get_sources       = function() return DANMAKU.sources end,
+    get_rendered      = function() return RENDERED_DANMAKU end,
+    black_patterns    = black_patterns,
+    is_blacklisted    = is_blacklisted,
+    make_delay_lookup = make_delay_lookup,
+})
 
 -- 简繁转换
 local function convert(text, dict)
@@ -572,8 +590,21 @@ function DanmakuArray:get_fixed_y(start_time, height, duration, from_top)
     return y
 end
 
--- 将弹幕转换为 XML 格式
+--[[ ★ 本项目改动（一）：保存模式的转发 shim
+
+     上游的 convert_danmaku_to_xml() 只能存原始弹幕。本项目加了 filtered / merged
+     两种模式，实现放在 modules/save_danmaku.lua —— 单独一个文件，
+     上游永远不会碰它，所以合并上游时不冲突。
+
+     这里只在**函数最前面**加几行转发，下面整段上游代码原样不动：
+       raw（默认）→ 不转发，继续走上游原实现，行为与上游完全一致
+       filtered / merged → 交给新模块
+]]
 function convert_danmaku_to_xml(danmaku_out)
+    local handled, result = save_ext.handle(danmaku_out)
+    if handled then return result end
+
+    -- ↓↓↓ 以下为上游原样实现，请勿改动（要加功能请改 modules/save_danmaku.lua）↓↓↓
     local danmakus = {}
     for url, source in pairs(DANMAKU.sources) do
         if not source.blocked and source.data then
@@ -634,6 +665,7 @@ function convert_danmaku_to_xml(danmaku_out)
     msg.info("转换 XML 弹幕成功： " .. danmaku_out)
     return true
 end
+-- ↑↑↑ 上游原样实现到此结束 ↑↑↑
 
 function convert_danmaku_to_ass_events(force)
     local per_source_lists = {}
@@ -700,6 +732,11 @@ function convert_danmaku_to_ass_events(force)
         end
         danmakus = merge_duplicate_danmaku(danmakus, options.merge_tolerance)
     end
+
+    -- ★ 本项目改动（二）：存一份「黑名单 + 合并之后」的结果，
+    -- 供 save_danmaku_mode=merged 保存快照。放在空数组检查之前，
+    -- 免得为空时留着上一次的旧结果。
+    RENDERED_DANMAKU = danmakus
 
     if #danmakus == 0 then
         if not force then
