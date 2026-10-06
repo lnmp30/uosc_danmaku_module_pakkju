@@ -581,11 +581,21 @@ function add_danmaku_source_local(query, from_menu)
         return
     end
 
+    -- ★ 本项目改动：把文件里带的阶段标签挂在来源上，供
+    -- convert_danmaku_to_ass_events 判断要不要跳过已经做过的步骤
+    -- （merged 的快照不能再合并一次，否则计数会叠加）
+    local data, stage = parse_danmaku_file(path)
+
     if DANMAKU.sources[query] ~= nil then
         DANMAKU.sources[query]["from"] = "user_local"
-        DANMAKU.sources[query]["data"] = parse_danmaku_file(path)
+        DANMAKU.sources[query]["data"] = data
+        DANMAKU.sources[query]["stage"] = stage
     else
-        DANMAKU.sources[query] = {from = "user_local", data = parse_danmaku_file(path)}
+        DANMAKU.sources[query] = {from = "user_local", data = data, stage = stage}
+    end
+
+    if stage and stage ~= "raw" then
+        msg.info(string.format("本地弹幕带阶段标签 %s：已完成的步骤不再重做", stage))
     end
 
     set_danmaku_button()

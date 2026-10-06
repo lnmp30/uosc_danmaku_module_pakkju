@@ -418,8 +418,11 @@ function parse_json_danmaku(json_string)
 end
 
 -- 解析弹幕文件
+-- ★ 本项目改动：额外返回第二个值——文件里带的阶段标签（raw/filtered/merged）。
+-- 读不到就是 nil（= 当 raw）。老调用方只取第一个返回值，不受影响。
 function parse_danmaku_file(danmaku_input)
     local danmakus = {}
+    local stage = nil
 
     if file_exists(danmaku_input) then
         local content = read_file(danmaku_input)
@@ -430,6 +433,7 @@ function parse_danmaku_file(danmaku_input)
             elseif danmaku_input:match("%.json$") then
                 parsed = parse_json_danmaku(content)
             end
+            stage = save_ext.read_stage(content)
 
             for _, d in ipairs(parsed) do
                 table.insert(danmakus, d)
@@ -450,7 +454,7 @@ function parse_danmaku_file(danmaku_input)
         return nil
     end
 
-    return danmakus
+    return danmakus, stage
 end
 
 --# 弹幕数组与布局算法 (Danmaku Array & Layout Algorithms)
@@ -686,6 +690,8 @@ function convert_danmaku_to_ass_events(force)
                     color = d.color,
                     text = d.text,
                     source = url,
+                    -- ★ 本项目新增：带上来源的阶段标签，后面据此决定跳过哪些步骤
+                    save_stage = save_ext.source_stage(source),
                 }
                 if not is_blacklisted(d.text, black_patterns) then
                     table.insert(list, entry)
@@ -723,15 +729,32 @@ function convert_danmaku_to_ass_events(force)
 
     -- pakku 合并：内置拼音字典 + 编辑距离 + 余弦相似度的滑动窗口聚类
     -- 未启用时退回原有的“文本完全相同”合并
+    --
+    -- ★ 本项目改动（三）：带 merged 标签的弹幕文件（本项目保存的快照）
+    -- 里面的正文已经是 `恭喜(12)` 了，**不能再合并一次** —— 否则标记会被当成
+    -- 正文参与相似度，`恭喜(12)` ×3 会变成 `恭喜(12)(3)`，快照就毁了。
+    -- 所以先按来源的阶段分流：settled 那拨不参与合并，改为从 (N) 标记
+    -- 还原 merge_count / 放大系数。没有这类来源时 pending 就是原表，老路径不变。
+    local pending, settled = save_ext.split_by_stage(danmakus)
+    if settled then
+        local restored = save_ext.restore_merged(settled, options)
+        msg.info(string.format(
+            "本地弹幕已是合并后的快照：%d 条不再合并，其中 %d 条还原了合并计数",
+            #settled, restored))
+    end
+
     local pakku_stats = nil
     if options.pakku_enable then
-        danmakus, pakku_stats = pakku.merge(danmakus, options)
+        pending, pakku_stats = pakku.merge(pending, options)
     else
         if options.max_screen_danmaku > 0 and options.merge_tolerance <= 0 then
             options.merge_tolerance = options.scrolltime
         end
-        danmakus = merge_duplicate_danmaku(danmakus, options.merge_tolerance)
+        pending = merge_duplicate_danmaku(pending, options.merge_tolerance)
     end
+
+    -- 把两部分合回去（settled 为空时原样返回 pending）
+    danmakus = save_ext.rejoin(pending, settled)
 
     -- ★ 本项目改动（二）：存一份「黑名单 + 合并之后」的结果，
     -- 供 save_danmaku_mode=merged 保存快照。放在空数组检查之前，

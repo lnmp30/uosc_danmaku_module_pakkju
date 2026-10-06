@@ -1032,6 +1032,10 @@ local function enlarge_scale(count, cfg)
     return r
 end
 
+-- ★ 对外开放：modules/save_danmaku.lua 需要它来给「已合并的弹幕文件」还原
+-- 字号放大系数（xml 里塞不下 merge_count，只能从 (N) 标记反解再算回来）。
+M.enlarge_scale = enlarge_scale
+
 -- 下标数字（U+2080 ~ U+2089）与下标括号（U+208D / U+208E）。
 -- pakku.js 的 DANMU_SUBSCRIPT=on 时用它拼出 ₍₁₂₎ 这种标记。
 --! 默认不用这套：下标字形只有正文字体的五成多高，看着偏小，

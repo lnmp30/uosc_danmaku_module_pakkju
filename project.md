@@ -36,7 +36,7 @@
 | `changelog.md` | 翻旧账的人 | 按版本记录「为什么改这一版」，含当时的日志证据 |
 | `THIRD-PARTY.md` | 分发的人 | 第三方组件与许可证全文位置 |
 | `test/auto_select_test.lua` | CI / 改功能二的人 | 自动选择逻辑的单测（47 项） |
-| `test/save_danmaku_test.lua` | CI / 改功能三的人 | 保存模式的单测（24 项） |
+| `test/save_danmaku_test.lua` | CI / 改功能三的人 | 保存模式 + 阶段标签的单测（66 项） |
 | `test/docs_check.lua` | CI / 改任何选项的人 | 文档与代码的一致性检查（8 项） |
 
 ---
@@ -653,7 +653,94 @@ function convert_danmaku_to_xml(danmaku_out)
 **标记约定**：`parse.lua` 里本项目新增/改动的地方都带 `★`，
 `grep '★' modules/parse.lua` 能一次列全（共 4 处）。
 
-### 7.4 本功能内部实现要点
+### 7.4 阶段标签：让保存出来的文件可以被安全地「再打开」
+
+**先说 bug**。`merged` 快照的正文是 `恭喜(12)`。把它当普通弹幕源再跑一遍合并，
+标记会被当成正文参与相似度（`normalize` 不会去掉它）：
+
+```
+3 条「恭喜」     -> 正常合并 -> 恭喜(3)        ✓
+3 条「恭喜(12)」 -> 再合并   -> 恭喜(12)(3)    ✗ 计数叠加，文本被污染
+```
+
+拿真实快照实测：**4775 条被错误地合成 4655 条**（120 条被二次合并）。
+
+**做法**：保存时往文件里写一条标准 XML 注释记录阶段，加载时读出来，
+已经做过的步骤不重做。
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?><i>
+<!-- uosc_danmaku:stage=merged -->
+```
+
+| 设计点 | 选择 | 理由 |
+|---|---|---|
+| 载体 | **XML 注释** | 标准 XML，其它播放器直接忽略；换成自定义属性有被严格解析器拒的风险 |
+| 位置 | `<i>` 后的第一行 | 首行 `<?xml …?><i>` 与上游逐字节一致 |
+| `raw` | **不写标签** | raw 走的是上游那个写出函数（要保持原样）；而且「没有标签」本就等价于 raw |
+| 识别范围 | 只看前 512 字节 | 标签是我们写在最前面的，没必要全文扫；也避免正文里的偶发命中 |
+| 大小写 | 不敏感 | 手改方便 |
+| 非法值 | 忽略（当 raw） | 手写错一个词不该让弹幕加载失败 |
+
+**管线**（`convert_danmaku_to_ass_events` 里的分流）：
+
+```
+             黑名单过滤 ──► pakku 合并 ──► 呈现（按合并数放大）
+                 │              │                │
+   raw ──────────┘              │                │
+   filtered ────────────────────┘                │
+   merged ───────────────────────────────────────┘
+```
+
+| 标签 | 过滤 | 合并 | 说明 |
+|---|---|---|---|
+| `raw` / 无 | ✅ | ✅ | 老路径 |
+| `filtered` | ✅ | ✅ | 过滤是纯函数、重做幂等，所以**加载时不需要特殊处理** |
+| `merged` | ✅ | **跳过** | 见下 |
+
+`filtered` 不需要特殊处理这件事是刻意的：黑名单是「显示期过滤」而非内容变换，
+重做一遍结果一样，而且用户改了黑名单能立刻生效。所以三个标签里只有 `merged`
+改变处理方式 —— 文档里讲清楚了，免得看起来像漏实现。
+
+**`merged` 的分流与计数还原**：
+
+```lua
+local pending, settled = save_ext.split_by_stage(danmakus)   -- settled = 已合并的
+if settled then
+    local restored = save_ext.restore_merged(settled, options)
+    ...
+end
+-- pakku 只合并 pending；settled 不做任何相似度比较
+danmakus = save_ext.rejoin(pending, settled)
+```
+
+- `split_by_stage` 没有 `merged` 来源时**返回原表本身**，`rejoin` 也原样返回 ——
+  老路径的数量、顺序、对象标识都不变
+- `settled` 里的条目靠 `entry.save_stage` 认出来（在逐源展开时挂上的）
+- 混合来源（本地快照 + 在线弹幕）也正确处理：在线的照常合并，快照的照常跳过
+
+**从 `(N)` 反解合并数**：xml 格式塞不下 `merge_count`，所以单看文件不知道该放大多少。
+`M.parse_mark(text)` 从正文里把标记认出来（`(12)` / `₍₁₂₎` / `[x12]`，前缀后缀都认），
+`M.restore_merged()` 据此设回 `merge_count` / `merge_mark`，
+并用 `pakku.enlarge_scale()` 算出 `merge_scale` —— 于是字号放大也重现了。
+
+> `enlarge_scale` 原来是 `pakku.lua` 的 local，本版本加了
+> `M.enlarge_scale = enlarge_scale` 一行把它暴露出来（`pakku.lua` 是本项目的新文件，
+> 加这行不和上游冲突）。
+
+实测：快照 4775 条，`parse_mark` 认出 791 条，其中 76 条会真的放大
+（最大 2.00 倍，对应合并 60 条）。
+
+**读侧开关**：`save_danmaku_resume = auto | ignore`。
+`ignore` 是给「改过黑名单 / pakku 参数后想拿旧快照重跑」用的。
+两种模式都有日志，不靠猜：
+
+```
+本地弹幕带阶段标签 merged：已完成的步骤不再重做
+本地弹幕已是合并后的快照：4775 条不再合并，其中 791 条还原了合并计数
+```
+
+### 7.5 本功能内部实现要点
 
 **排序只在新模式做**：`pairs(DANMAKU.sources)` 的顺序不确定，
 所以上游导出的行顺序每次都不一样。新模块统一按时间排序；
@@ -676,7 +763,7 @@ function convert_danmaku_to_xml(danmaku_out)
 转换 XML 弹幕成功（merged，4768 条）：/path/to/xxx.xml
 ```
 
-### 7.5 与上游行为的差异
+### 7.6 与上游行为的差异
 
 | 行为 | 上游 | 本项目 |
 |---|---|---|
@@ -688,7 +775,7 @@ function convert_danmaku_to_xml(danmaku_out)
 > `raw` 的输出与上游**逐字节一致**，已用 `git show <加功能前的提交>` 取旧文件、
 > 逐字节比对验证（1983 字节 / 60 行全等）。
 
-### 7.6 已知限制
+### 7.7 已知限制
 
 - **`merged` 依赖渲染**：没有渲染过就没有快照。`on_unload`（自动保存）时
   弹幕早就渲染过了，所以自动保存没问题；提前手动触发才会遇到。
@@ -917,7 +1004,7 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 
 ```bash
 luajit test/auto_select_test.lua     # 通过 47，失败 0
-luajit test/save_danmaku_test.lua    # 通过 27，失败 0
+luajit test/save_danmaku_test.lua    # 通过 66，失败 0
 ```
 
 两个测试都**直接从 `menu.lua` / `utils.lua` / `parse.lua` 里按标记切出真实代码**
@@ -933,6 +1020,12 @@ luajit test/save_danmaku_test.lua    # 通过 27，失败 0
 `handled=false` 把活让回上游**、`filtered` 过滤黑名单、`merged` 用快照且保留
 `(12)` 标记、按时间排序、XML 转义、快照为空时不瞎存、所有源被屏蔽时的提示、
 没注入依赖时明确报错（而不是静默甩给上游）。
+
+阶段标签部分另有一组：标签读写往返（含「raw 不写标签」「首行与上游一致」
+「正文里出现同样的字不算标签」「非法值忽略」「大小写不敏感」「其它播放器的文件读回 nil」）、
+`parse_mark` 的六种形态、`restore_merged` 还原计数与放大、
+`split_by_stage` / `rejoin`（含**「没有 merged 来源时必须原样返回原表」**——
+这条保证老路径零变化）、`resume=ignore` 时分流被跳过。
 
 `docs_check.lua` 是**文档一致性**检查（8 项）：选项覆盖、默认值逐值比对、
 文档引用的函数名是否存在、目录锚点、表格列数、章节编号连续。
@@ -1350,3 +1443,6 @@ git grep -nEI "[A-Z]:\\\\Users|/Users/|/home/[a-z]|AppData" -- .
 | `还没有合并结果可保存，请先让弹幕显示一次` | `merged` 依赖渲染快照 | §7.3 |
 | `已存在同名弹幕文件：…` | 自动保存不覆盖已有文件 | 手动发 `immediately_save_danmaku` |
 | `此弹幕文件不支持保存至本地` | 网络串流且没设 `save_danmaku_path` | `readme.md` 其余选项 |
+| `本地弹幕带阶段标签 merged：已完成的步骤不再重做` | 认出了保存时写入的阶段标签 | §7.4 |
+| `本地弹幕已是合并后的快照：N 条不再合并，其中 M 条还原了合并计数` | 跳过了二次合并并复原了放大 | §7.4 |
+| 本地快照重新加载后条数变少、冒出 `(12)(3)` | 阶段标签没被认出来（被覆盖过？） | §7.4，查 `save_danmaku_resume` |

@@ -119,7 +119,11 @@ for _, doc in ipairs({{"readme.md", readme}, {"project.md", project}}) do
         local k = "M."..name
         if not seen2[k] then
             seen2[k] = true; fnchecked = fnchecked + 1
-            if not all:find("function%s+M%."..name.."%f[%W]") then fnmiss[#fnmiss+1] = dn..": M."..name end
+            -- 既接受 function M.xxx，也接受 M.xxx = ...（把内部函数暴露出来的常见写法）
+            if not (all:find("function%s+M%."..name.."%f[%W]")
+                 or all:find("M%."..name.."%s*=%s*[^=]")) then
+                fnmiss[#fnmiss+1] = dn..": M."..name
+            end
         end
     end
 end

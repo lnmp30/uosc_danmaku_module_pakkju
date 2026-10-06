@@ -52,6 +52,59 @@ local function need()
     return deps
 end
 
+local pakku = require("modules/pakku")
+
+-- ---------------------------------------------------------------------------
+-- 阶段标签
+--
+--! 解决什么问题：本项目保存的 `merged` 文件里，正文是 `恭喜(12)` 这种带标记的
+--! 文本。把它当普通弹幕源再跑一遍合并，标记会被当成正文参与相似度 ——
+--! `恭喜(12)` 三条会变成 `恭喜(12)(3)`（计数叠加、文本被污染），快照就毁了。
+--!
+--! 做法：保存时在文件里写一条 **标准 XML 注释** 记录「这份数据已经走到哪一步」，
+--! 加载时读出来，已经做过的步骤就不再重做。
+--!
+--! 用注释而不是属性/自定义标签，是因为注释是标准 XML ——
+--! 其它播放器（DanDanPlay、网页播放器…）会直接忽略，不会因为多了个属性报错。
+--! 位置放在 `<i>` 后面第一行，这样第一行 `<?xml ...?><i>` 和上游逐字节一致。
+--
+--! `raw` 不写标签 —— raw 走的是上游那个写出函数（原样保留，不改），
+--! 而「没有标签」本来就等价于 raw，所以不需要。
+local STAGE_TAG_PREFIX = "uosc_danmaku:stage="
+
+local VALID_STAGES = { raw = true, filtered = true, merged = true }
+
+-- 从弹幕文件内容里读出阶段。读不到（或不是三种之一）就返回 nil = 当 raw。
+function M.read_stage(content)
+    if type(content) ~= "string" then return nil end
+    -- 只看开头：标签是我们自己写在最前面的，没必要全文扫
+    local head = content:sub(1, 512)
+    local stage = head:match("<!%-%-%s*" .. STAGE_TAG_PREFIX .. "(%a+)%s*%-%->")
+    if stage then
+        stage = stage:lower()
+        if VALID_STAGES[stage] then return stage end
+    end
+    return nil
+end
+
+-- 某个弹幕源身上带的阶段（parse.lua 在加载本地文件时挂上去的）
+function M.source_stage(source)
+    local stage = source and source.stage
+    if type(stage) == "string" then
+        stage = stage:lower()
+        if VALID_STAGES[stage] then return stage end
+    end
+    return nil
+end
+
+-- 读侧策略：auto = 按标签接着跑；ignore = 忽略标签，一律当原始弹幕
+local function resume_policy()
+    local v = type(options) == "table" and options.save_danmaku_resume
+    v = tostring(v or "auto"):lower()
+    if v == "ignore" then return "ignore" end
+    return "auto"
+end
+
 -- ---------------------------------------------------------------------------
 -- 模式
 -- ---------------------------------------------------------------------------
@@ -122,10 +175,155 @@ local function collect_rendered()
 end
 
 -- ---------------------------------------------------------------------------
+-- 从合并标记还原「合并了几条」
+--
+--! 为什么需要：xml 格式里塞不下 merge_count，所以 merged 快照丢了放大所需的
+--! 计数 —— 重新加载后 `(12)` 只是普通文字，字号不会放大，和当时看到的不一样。
+--! 好在标记本身就写着数量，反解出来即可。
+--
+-- 支持本项目写出的三种形式，前缀后缀都认：
+--   (12)      默认
+--   ₍₁₂₎      mark_subscript=yes
+--   [x12]     pakku.js 的另一种风格（留个兼容）
+-- ---------------------------------------------------------------------------
+local SUB_DIGIT = {}                     -- U+2080..U+2089 -> "0".."9"
+for i = 0, 9 do
+    SUB_DIGIT[string.char(0xE2, 0x82, 0x80 + i)] = tostring(i)
+end
+local SUB_LP = string.char(0xE2, 0x82, 0x8D)   -- ₍
+local SUB_RP = string.char(0xE2, 0x82, 0x8E)   -- ₎
+
+-- 从一段下标里还原出数字串；不是合法下标就返回 nil
+local function subscript_to_number(s)
+    local out = {}
+    for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+        local d = SUB_DIGIT[ch]
+        if not d then return nil end
+        out[#out + 1] = d
+    end
+    if #out == 0 then return nil end
+    return table.concat(out)
+end
+
+-- 从 text 里认出合并标记。返回 count, mark（mark 是原文里的那一段，用于加粗）。
+function M.parse_mark(text)
+    if type(text) ~= "string" then return nil end
+
+    -- 后缀：(12) / [x12] / ₍₁₂₎
+    local n = text:match("%((%d+)%)$")
+    if n then local m = "(" .. n .. ")"; return tonumber(n), m end
+    n = text:match("%[x(%d+)%]$")
+    if n then local m = "[x" .. n .. "]"; return tonumber(n), m end
+    if text:sub(-#SUB_RP) == SUB_RP then
+        local lp = text:find(SUB_LP, 1, true)
+        if lp then
+            local digits = subscript_to_number(text:sub(lp + #SUB_LP, -#SUB_RP - 1))
+            if digits then
+                local m = text:sub(lp)
+                return tonumber(digits), m
+            end
+        end
+    end
+
+    -- 前缀：(12) / [x12] / ₍₁₂₎
+    n = text:match("^%((%d+)%)")
+    if n then local m = "(" .. n .. ")"; return tonumber(n), m end
+    n = text:match("^%[x(%d+)%]")
+    if n then local m = "[x" .. n .. "]"; return tonumber(n), m end
+    if text:sub(1, #SUB_LP) == SUB_LP then
+        local rp = text:find(SUB_RP, 1, true)
+        if rp then
+            local digits = subscript_to_number(text:sub(#SUB_LP + 1, rp - 1))
+            if digits then
+                local m = text:sub(1, rp)
+                return tonumber(digits), m
+            end
+        end
+    end
+
+    return nil
+end
+
+-- 给一批「已经合并过」的条目还原 merge_count / merge_mark / merge_scale，
+-- 让字号放大能重现。返回还原了几条。
+function M.restore_merged(entries, cfg)
+    local count = 0
+    local built = nil
+    for _, e in ipairs(entries) do
+        local n, mark = M.parse_mark(e.text)
+        if n and n > 1 and mark then
+            e.merge_count = n
+            e.merge_mark = mark
+            -- pakku 路径的字号看 merge_scale；算出来才能重现当时的放大
+            if pakku.enlarge_scale then
+                if not built then built = pakku.build_config(cfg or options) end
+                e.merge_scale = pakku.enlarge_scale(n, built)
+            end
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- ---------------------------------------------------------------------------
+-- 合并前的分流
+-- ---------------------------------------------------------------------------
+
+--[[ 把待渲染的弹幕按「来源是否已经合并过」分成两拨：
+
+       pending  = 还没合并过的（要送进 pakku）
+       settled  = 已经合并过的（来自 merged 标签的文件，**不能**再合并）
+
+     没有 settled 时 pending 就是原表（数量与顺序都不变），
+     所以「没有带标签的文件」这条老路径一行都没变。
+]]
+function M.split_by_stage(danmakus)
+    local stage_of = {}
+    local d = deps
+    if d then
+        for url, source in pairs(d.get_sources()) do
+            stage_of[url] = M.source_stage(source)
+        end
+    end
+    if resume_policy() == "ignore" then stage_of = {} end
+
+    -- 先探一遍有没有 settled，避免白建表
+    local any = false
+    for _, e in ipairs(danmakus) do
+        if stage_of[e.source] == "merged" then any = true; break end
+    end
+    if not any then return danmakus, nil end
+
+    local pending, settled = {}, {}
+    for _, e in ipairs(danmakus) do
+        if stage_of[e.source] == "merged" then
+            settled[#settled + 1] = e
+        else
+            pending[#pending + 1] = e
+        end
+    end
+    return pending, settled
+end
+
+-- 把合并结果和「已合并」的那拨合回去。settled 为空时原样返回 pending。
+function M.rejoin(pending, settled)
+    if not settled or #settled == 0 then return pending end
+    local out = {}
+    for _, e in ipairs(pending) do out[#out + 1] = e end
+    for _, e in ipairs(settled) do out[#out + 1] = e end
+    table.sort(out, function(a, b) return a.time < b.time end)
+    return out
+end
+
+-- ---------------------------------------------------------------------------
 -- 写出
 -- ---------------------------------------------------------------------------
-local function build_xml(danmakus)
+local function build_xml(danmakus, stage)
     local xml = { '<?xml version="1.0" encoding="UTF-8"?><i>\n' }
+    -- 阶段标签（标准 XML 注释，其它播放器会忽略）
+    if stage and stage ~= "raw" then
+        xml[#xml + 1] = string.format('<!-- %s%s -->\n', STAGE_TAG_PREFIX, stage)
+    end
     for _, d in ipairs(danmakus) do
         local text = d.text or ""
         text = text:gsub("&", "&amp;")
@@ -191,7 +389,7 @@ function M.handle(danmaku_out)
         msg.info("无法写入目标 XML 文件: " .. danmaku_out)
         return true, false
     end
-    file:write(build_xml(danmakus))
+    file:write(build_xml(danmakus, mode))
     file:close()
 
     show_message(string.format("已保存 %d 条弹幕（%s）：%s", #danmakus, mode, danmaku_out), 4)

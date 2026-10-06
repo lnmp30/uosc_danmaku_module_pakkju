@@ -34,6 +34,13 @@ options = {
     --! merged 依赖渲染时算好的结果，所以要在弹幕已经显示过之后保存才有效；
     --! 它存出来的是「快照」，下次当成本地弹幕加载即可复现同样的观感
     save_danmaku_mode = "raw",
+    -- 读到自己保存的弹幕文件（带阶段标签）时怎么处理：
+    --   auto   按标签接着跑（默认）：merged 的快照不再合并（否则计数会叠加）
+    --   ignore 忽略标签，一律当原始弹幕从头处理
+    --! 标签是文件里的一条 XML 注释（<!-- uosc_danmaku:stage=merged -->），
+    --! 是标准 XML，其它播放器会直接忽略。
+    --! raw 不写标签 —— 「没有标签」本来就等于 raw，所以不需要。
+    save_danmaku_resume = "auto",
     -- 向 HTTP 请求时使用的 User Agent
     user_agent = "mpv_danmaku/1.0",
     -- 可选：向 HTTP 请求时使用的代理，默认禁用
