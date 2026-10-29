@@ -942,6 +942,9 @@ script-message immediately_save_danmaku
 `parse.lua` / `blacklist.lua` / `pakku.lua` / `save_danmaku.lua` /
 `dandanplay.lua`）做内容指纹。
 
+> 本版（0.10.1）应为 `build 9/328984/625c3ebb`。
+> 0.10.0 的回归版本是 `build 9/327025/1cdcb45e`，看到这个就说明还没更新。
+
 > **换了新脚本后这行没变，就是文件没拷全。** 之前吃过一次亏：只更新了
 > `utils.lua` 没更新 `menu.lua`，新旧混着跑，从现象上完全看不出来。
 
@@ -983,6 +986,11 @@ conf 文件编码是不是 UTF-8。
 | `显示 uosc 菜单` | 装了 uosc、前端也能把触摸转成鼠标，就没事 |
 | `显示键盘列表` | 弹的是 `mp.input` 的 `选择:` 列表，**安卓上根本选不了** → 开 `danmaku_auto_select=yes` |
 | `无可用的选择界面` | 既没 uosc 也没 `mp.input`。这条以前是完全静默的 |
+
+> **0.10.0 的例外**：日志里 `⑥ 选中` 之后紧跟着
+> `bad argument #1 to 'parse_json' (string expected, got table)`，
+> 那不是选择/网络问题，是 `latest_menu_anime` 的类型回归，更新到 0.10.1 即可
+> （详见 [changelog 0.10.1](changelog.md#0101---2026-10-29)）。
 
 另外两条排错用的说明：
 
@@ -1044,13 +1052,13 @@ msg-level=all=info,uosc_danmaku=v
 ## 8. 跑单测（改代码时）
 
 ```bash
-luajit test/auto_select_test.lua     # 通过 47，失败 0
+luajit test/auto_select_test.lua     # 通过 54，失败 0
 luajit test/save_danmaku_test.lua    # 通过 66，失败 0
 luajit test/docs_check.lua           # 通过 8，失败 0
 ```
 
 - `auto_select_test.lua` 覆盖自动选择的全部判定逻辑（列表类型识别、集数匹配、
-  导航项跳过、跨入口去重、收尾只跑一次）
+  导航项跳过、跨入口去重、收尾只跑一次、`latest_menu_anime` 的类型兜底）
 - `save_danmaku_test.lua` 覆盖三种模式各自取哪些条目、（`raw` 时必须**让回给上游**）、
   `merged` 用快照且保留标记、按时间排序、XML 转义、非法取值回退、没注入依赖时的报错，
   以及**阶段标签的读写、`(N)` 反解、`split_by_stage` 分流**

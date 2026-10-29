@@ -17,12 +17,80 @@
 | 版本号 | 位置 | 说明 |
 |---|---|---|
 | `uosc_danmaku` **2.2.0** | `portable_config/scripts/uosc_danmaku/main.lua:1` | 上游版本，本项目**未改动** |
-| 本项目 **0.10.0** | 本文件 | pakku 移植的版本 |
+| 本项目 **0.10.1** | 本文件 | pakku 移植的版本 |
 
 也就是说：`main.lua` 里的 `VERSION` 仍然报 2.2.0。
 如果希望 mpv 脚本消息里也能看出多了 pakku，可以自行改成
 `2.2.0+pakku.1`（`mp.commandv('script-message', 'uosc_danmaku-version', VERSION)`
 会把它广播给 uosc 的按钮提示）。
+
+---
+
+## [0.10.1] - 2026-10-29
+
+**修掉 0.10.0 同步上游时带回来的一次回归：一键搜索选中番剧后，剧集请求的
+回调直接抛 Lua error，弹幕不加载。手机/平板最常走自动选择，所以症状集中在
+这两类设备上。**
+
+### 问题
+
+安卓日志（`mpvplayer_logs (3).txt`）里，流程停在「⑥ 选中」，紧接着就是：
+
+```
+[uosc_danmaku] [flow] ⑥ 选中：BanG Dream! It`s MyGO!!!!!（评分 101.2）
+[uosc_danmaku] 	[C]: in function 'parse_json'
+[uosc_danmaku] 	.../modules/menu.lua:842: in function <.../modules/menu.lua:765>
+[uosc_danmaku] Lua error: bad argument #1 to '?' (string expected, got table)
+```
+
+`get_episodes()` 的 HTTP 请求其实**已经成功**（剧集数据到手了），崩溃发生在
+回填「返回搜索结果」菜单的那几行。异常在 `call_cmd_async` 的回调里，没人
+兜住，于是后面的自动选集、显示菜单、加载弹幕全都不执行 —— 从用户视角看
+就是「一键搜索成功了，然后什么都没发生」。
+
+### 原因
+
+`latest_menu_anime` 的合法值只有 **JSON 字符串**，但上游把初始值写成了 `{}`：
+
+```lua
+latest_menu_anime = {}
+...
+if latest_menu_anime and latest_menu_anime ~= "" then
+    local menu_table = utils.parse_json(latest_menu_anime)  -- 空 table 也能过判断
+```
+
+0.9.1 里 `parallel_requests` 的收尾回调无论走哪条路径都会写一次
+`latest_menu_anime`；0.10.0 把收尾合并进 `do_final_update()`，而开
+`danmaku_auto_select` 时它调完 `run_menu_item()` 就 `return`，再没人赋值。
+自动选择又恰恰是手机/平板唯一能用的路径（uosc 菜单要鼠标事件、
+`mp.input` 列表要键盘），所以 `{}` 一路被送到 `utils.parse_json()`。
+
+### 修复
+
+- `latest_menu_anime` 初始化改为 `nil`；新增 `get_latest_menu_table()` 作为**唯一读取入口**：
+  只有字符串才解析，`nil` / 空串 / 表 / 坏 JSON 一律返回 `nil`，且 `parse_json` 用
+  `pcall` 兜住。所有调用点不再把原始值直接丢给 `parse_json`。
+- `get_episodes()` 只在确实显示过搜索结果菜单时才插入「↩️ 返回搜索结果」，
+  并复用同一次解析结果做回填；自动选择路径既没有菜单，也就不会再造出一个
+  指向空值的导航项。
+- `open-latest-menu-anime` 的消息处理和 `apis/extra.lua` 里的同类导航项都加了
+  类型判断，坏状态最多被忽略，不会再打断调用栈。
+- 回归单测：`test/auto_select_test.lua` 新增 7 项，覆盖 `nil` / `{}` / 非空 table /
+  空串 / 正常 JSON，并断言**非字符串根本不会调用 `parse_json`**。
+
+### 验证
+
+```powershell
+.\luajit.exe test\auto_select_test.lua    # 通过 54，失败 0
+.\luajit.exe test\save_danmaku_test.lua   # 通过 66，失败 0
+.\luajit.exe test\docs_check.lua          # 通过 8，失败 0
+```
+
+### 升级提醒
+
+改动在 `modules/menu.lua` 与 `apis/extra.lua`，仍建议整包覆盖
+`portable_config/scripts/uosc_danmaku/`。日志第一行的构建指纹应从
+`build 9/327025/1cdcb45e` 变为 `build 9/328984/625c3ebb`；没变就是文件没拷全。
 
 ---
 

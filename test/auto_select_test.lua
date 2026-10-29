@@ -285,6 +285,42 @@ for _, f in ipairs(timeouts) do f() end
 check("关掉自动选择后仍保留该功能", open_menu_calls, 1)
 state.auto_select = true
 
+print()
+print("== latest_menu_anime：只认 JSON 字符串 ==")
+-- 0.10.1 的线上崩溃：自动选择路径不弹搜索结果菜单，latest_menu_anime 停在
+-- 初始值 `{}`，get_episodes 把它交给 parse_json -> string expected, got table。
+-- 这里直接验证「非字符串绝不进 parse_json」。
+local get_latest_menu_table = slice(MENU,
+    "local function get_latest_menu_table()",
+    "-- 如果 latest_menu_anime 中存在首项为加载占位",
+    "get_latest_menu_table")()
+
+local parse_json_calls, orig_parse_json = 0, _G.utils.parse_json
+_G.utils.parse_json = function(s)
+    parse_json_calls = parse_json_calls + 1
+    if type(s) ~= "string" then
+        error("bad argument #1 to 'parse_json' (string expected, got " .. type(s) .. ")")
+    end
+    return orig_parse_json(s)
+end
+
+_G.latest_menu_anime = nil
+check("nil -> nil", get_latest_menu_table(), nil)
+_G.latest_menu_anime = {}
+parse_json_calls = 0
+check("空 table -> nil（0.10.1 崩溃现场）", get_latest_menu_table(), nil)
+check("空 table 根本不会调用 parse_json", parse_json_calls, 0)
+_G.latest_menu_anime = { items = {} }
+parse_json_calls = 0
+check("非空 table 同样不解析", get_latest_menu_table(), nil)
+check("非空 table 也不会调用 parse_json", parse_json_calls, 0)
+_G.latest_menu_anime = ""
+check("空串 -> nil", get_latest_menu_table(), nil)
+_G.latest_menu_anime = '{"items":[]}'
+check("JSON 字符串 -> table", type(get_latest_menu_table()), "table")
+_G.utils.parse_json = orig_parse_json
+_G.latest_menu_anime = nil
+
 -- =====================================================================
 print()
 print(string.rep("-", 56))

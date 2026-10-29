@@ -35,7 +35,15 @@ local function input_open(cb)
 end
 
 uosc_available = false
-latest_menu_anime = {}
+-- 只有两种合法状态：nil（还没显示过搜索结果菜单）或 JSON 字符串。
+--! 这里原来初始化成 `{}`（上游写法），但所有读取点都把它当字符串交给
+--! `utils.parse_json()`。一旦走「自动选择」——它不弹搜索结果菜单，没人给
+--! latest_menu_anime 赋值——`get_episodes()` 里就会 `parse_json({})`，
+--! 抛出 `bad argument #1 to 'parse_json' (string expected, got table)`。
+--! 这个异常发生在剧集请求的回调里，会把整个回调打断：日志停在「⑥ 选中」，
+--! 既没有剧集菜单也没有弹幕，看起来和网络失败一模一样。
+--! 安卓/平板最常走自动选择，所以症状集中在这两类设备上。见 changelog 0.10.1。
+latest_menu_anime = nil
 local active_request_cancel = nil
 local active_request_type = nil
 local request_cancelled = false
@@ -365,11 +373,21 @@ local function auto_select_should_skip(stage, context, item)
     return true
 end
 
+-- 读取 latest_menu_anime 的唯一入口。
+--! 只有 JSON 字符串才解析；nil / 空串 / 万一又被写成 table，一律当作
+--! 「没有可返回的菜单」返回 nil。所有调用点都不许再把原始值直接丢给
+--! `utils.parse_json()` —— 那正是 0.10.1 修掉的那次崩溃。
+local function get_latest_menu_table()
+    if type(latest_menu_anime) ~= "string" or latest_menu_anime == "" then return nil end
+    local ok, parsed = pcall(utils.parse_json, latest_menu_anime)
+    if not ok or type(parsed) ~= "table" then return nil end
+    return parsed
+end
+
 -- 如果 latest_menu_anime 中存在首项为加载占位，移除它（兼容完整 menu props 或 items 数组）
 local function strip_loading_from_latest_menu_anime()
-    if not latest_menu_anime or #latest_menu_anime == 0 then return end
-    local parsed = utils.parse_json(latest_menu_anime)
-    if not parsed or type(parsed) ~= "table" then return end
+    local parsed = get_latest_menu_table()
+    if not parsed then return end
     local function is_loading_item(it)
         if not it or type(it) ~= "table" then return false end
         if it.title == "加载数据中..." then return true end
@@ -662,6 +680,9 @@ function get_animes(query, filter_note)
     local server_order = servers
     local total_count = 0
     request_cancelled = false
+    -- 新的一次搜索作废旧菜单：否则自动选择路径不赋值时，会拿上一次的搜索结果
+    -- 去回填这一次的剧集，返回按钮指向的是旧列表。
+    latest_menu_anime = nil
 
     local message = server_hint .. "加载数据中..."
     local menu_type = "menu_anime"
@@ -768,12 +789,18 @@ function get_episodes(animeTitle, bangumiId, api_server)
             return
         end
 
-        table.insert(items, {
-            title = "↩️ 返回搜索结果",
-            value = { "script-message-to", mp.get_script_name(), "open-latest-menu-anime", latest_menu_anime },
-            keep_open = false,
-            selectable = true,
-        })
+        -- 只有真的显示过搜索结果菜单，才给「返回搜索结果」。
+        -- 自动选择路径全程不弹搜索菜单，latest_menu_anime 是 nil；旧代码照样插
+        -- 这一项，value 里塞的是 nil 或 table，点了要么无效要么让 uosc 报错。
+        local latest_menu = get_latest_menu_table()
+        if latest_menu then
+            table.insert(items, {
+                title = "↩️ 返回搜索结果",
+                value = { "script-message-to", mp.get_script_name(), "open-latest-menu-anime" },
+                keep_open = false,
+                selectable = true,
+            })
+        end
 
         if err then
             -- 安卓上不方便看日志，把失败原因直接摆到 OSD 上
@@ -837,10 +864,10 @@ function get_episodes(animeTitle, bangumiId, api_server)
             end
         end
 
-        -- ====== 新增：更新 latest_menu_anime ======
-        if latest_menu_anime and latest_menu_anime ~= "" then
-            local menu_table = utils.parse_json(latest_menu_anime)
-            if menu_table and type(menu_table.items) == "table" then
+        -- 把剧集列表回填进搜索结果菜单，方便「返回」后直接展开
+        if latest_menu then
+            local menu_table = latest_menu
+            if type(menu_table.items) == "table" then
                 for i, back_item in ipairs(menu_table.items) do
                     if type(back_item.value) == "table" and
                     back_item.value[5] == bangumiId and back_item.value[6] == api_server then
@@ -849,8 +876,8 @@ function get_episodes(animeTitle, bangumiId, api_server)
                         break
                     end
                 end
-                latest_menu_anime = utils.format_json(menu_table)
             end
+            latest_menu_anime = utils.format_json(menu_table)
         end
 
         trace_osd("⑦ 剧集列表 %d 条", #items)
@@ -2333,12 +2360,17 @@ mp.register_script_message("open_content_danmaku_menu", function()
 end)
 
 mp.register_script_message("open-latest-menu-anime", function ()
+    local menu_table = get_latest_menu_table()
+    if not menu_table then
+        msg.warn("没有可返回的搜索结果菜单（该次搜索没有显示过菜单）")
+        return
+    end
     if uosc_available then
         mp.commandv("script-message-to", "uosc", "open-menu", latest_menu_anime)
     elseif input_loaded then
         show_message("", 0)
         mp.add_timeout(0.1, function()
-            open_menu_select(utils.parse_json(latest_menu_anime))
+            open_menu_select(menu_table)
         end)
     end
 end)

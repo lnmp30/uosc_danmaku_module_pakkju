@@ -314,12 +314,14 @@ function get_details(class, id, site, title, year, number, episodenum)
             end
         end
 
-        table.insert(items, {
-            title = "↩️ 返回搜索结果",
-            value = { "script-message-to", "uosc", "open-menu", latest_menu_anime },
-            keep_open = false,
-            selectable = true,
-        })
+        if type(latest_menu_anime) == "string" and latest_menu_anime ~= "" then
+            table.insert(items, {
+                title = "↩️ 返回搜索结果",
+                value = { "script-message-to", "uosc", "open-menu", latest_menu_anime },
+                keep_open = false,
+                selectable = true,
+            })
+        end
 
         for _, ep in ipairs(episode_rows) do
             table.insert(items, {

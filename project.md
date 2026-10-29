@@ -35,7 +35,7 @@
 | `project.md` | 改代码的人（本文） | 实现细节、数据结构、坑、验证方法、扩展指南、合规 |
 | `changelog.md` | 翻旧账的人 | 按版本记录「为什么改这一版」，含当时的日志证据 |
 | `THIRD-PARTY.md` | 分发的人 | 第三方组件与许可证全文位置 |
-| `test/auto_select_test.lua` | CI / 改功能二的人 | 自动选择逻辑的单测（47 项） |
+| `test/auto_select_test.lua` | CI / 改功能二的人 | 自动选择逻辑的单测（54 项） |
 | `test/save_danmaku_test.lua` | CI / 改功能三的人 | 保存模式 + 阶段标签的单测（66 项） |
 | `test/docs_check.lua` | CI / 改任何选项的人 | 文档与代码的一致性检查（8 项） |
 
@@ -1038,6 +1038,39 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 | `--no-config` 不加载 scripts 目录 | 端到端测试时想用隔离 `MPV_HOME` 就别加 `--no-config`，否则 `MPV_HOME/scripts/` 不会被自动加载 |
 | `--script=<file>` 的 `package.path` | 不含脚本目录，`require("modules/…")` 会失败。必须用 `MPV_HOME/scripts/<名字>/main.lua` 的目录布局 |
 
+### 10.6 自动选择后 `parse_json` 崩溃（0.10.0 回归）⚠️
+
+现象：一键搜索**成功**、番剧也自动选中了，然后没有剧集菜单、没有弹幕。
+日志停在 `[flow] ⑥ 选中`，紧跟一段 Lua error：
+
+```
+[C]: in function 'parse_json'
+.../modules/menu.lua:842: in function <.../modules/menu.lua:765>
+Lua error: bad argument #1 to '?' (string expected, got table)
+```
+
+成因：`latest_menu_anime` 只该存 JSON 字符串，但上游把它初始化成 `{}`，
+守卫又是 `latest_menu_anime ~= ""`（空 table 也通过）。0.9.1 时
+`parallel_requests` 的收尾回调总会覆盖它；0.10.0 收尾合并进
+`do_final_update()` 后，`danmaku_auto_select` 路径在 `run_menu_item()` 处提前
+`return`，于是 `{}` 一直留到 `get_episodes()` 的
+`utils.parse_json(latest_menu_anime)`。
+
+为什么集中在手机/平板：自动选择本来就是为「没有键盘、uosc 菜单点不动」的
+环境加的，桌面端可能手动点菜单，反而绕过了这条路径。
+
+修法：
+
+1. 初始值改 `nil`（nil 与字符串之外的值都表示「还没有菜单」）；
+2. 新增 `get_latest_menu_table()`：非字符串/空串/坏 JSON 一律返回 nil，解析用
+   `pcall`；所有读取点统一走它，禁止再把原始值丢给 `parse_json`；
+3. `get_episodes()` 只在真有搜索结果菜单时才加「↩️ 返回搜索结果」，并复用
+   这一次解析结果；
+4. `open-latest-menu-anime` 与 `apis/extra.lua` 的导航项都先判类型。
+
+回归单测在 `auto_select_test.lua` 的「latest_menu_anime：只认 JSON 字符串」，
+断言非字符串**不会调用** `parse_json`。
+
 ---
 
 ## 11. 开发与验证
@@ -1045,7 +1078,7 @@ out = out:gsub("[ 　]+", " ")   -- 想匹配「空格和全角空格」
 ### 11.1 功能二 / 功能三：单测（秒级）
 
 ```bash
-luajit test/auto_select_test.lua     # 通过 47，失败 0
+luajit test/auto_select_test.lua     # 通过 54，失败 0
 luajit test/save_danmaku_test.lua    # 通过 66，失败 0
 ```
 
@@ -1056,7 +1089,7 @@ luajit test/save_danmaku_test.lua    # 通过 66，失败 0
 `auto_select_test.lua` 覆盖：`get_media_filename`、`hint_episode_number`
 （含「年份不算集数」）、`item_command_kind`、`looks_like_episode_list`、
 `pick_auto_item`（剧集/导航项/搜索列表/未知 value）、连按去重（含 A→B→A）、
-跨入口去重、收尾只跑一次、「先到先显示」抑制。
+跨入口去重、收尾只跑一次、「先到先显示」抑制、`latest_menu_anime` 的类型兜底。
 
 `save_danmaku_test.lua` 覆盖：`normalize_mode` 的各种取值、**`raw` 时必须返回
 `handled=false` 把活让回上游**、`filtered` 过滤黑名单、`merged` 用快照且保留
