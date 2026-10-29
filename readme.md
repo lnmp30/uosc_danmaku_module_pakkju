@@ -41,6 +41,7 @@
   - [和上游代码是怎么共存的](#和上游代码是怎么共存的)
 - [安装](#安装)
 - [其余选项（上游 uosc_danmaku 的）](#其余选项上游-uosc_danmaku-的)
+  - [2026-10 上游更新（本次合并）](#2026-10-上游更新本次合并)
 - [默认值对照：代码 vs 本仓库 conf](#默认值对照代码-vs-本仓库-conf)
 - [常见场景配方](#常见场景配方)
 - [常见问题](#常见问题)
@@ -382,7 +383,7 @@ danmaku_auto_select=no
 「要不要同时显示在屏幕上」—— 平时会一直刷屏，排查完记得改回 `no`。
 
 ```
-[uosc_danmaku] uosc_danmaku+pakku 2.2.0 build 6/209549/47053486
+[uosc_danmaku] uosc_danmaku+pakku 2.2.0 build 6/xxxxxx/xxxxxxxx
 [uosc_danmaku] 一键搜索：BOCCHI THE ROCK
 [uosc_danmaku] [flow] ① 关键词：BOCCHI THE ROCK
 [uosc_danmaku] [flow] ② 搜索「BOCCHI THE ROCK」，1 个服务器
@@ -545,7 +546,7 @@ save_danmaku_mode=merged
 `filtered` / `merged` 的实现放在**单独一个新文件** `modules/save_danmaku.lua`
 —— 上游没有这个文件，所以永远不会冲突。
 
-`parse.lua` 里对本功能只有三处极小改动，都带 `★` 标记，`grep '★'` 就能找全：
+`parse.lua` 里对本功能只有几处极小改动，都带 `★` 标记，`grep '★'` 就能找全：
 
 | 位置 | 改动 |
 |---|---|
@@ -555,6 +556,11 @@ save_danmaku_mode=merged
 | `convert_danmaku_to_ass_events()` 里 | 一行 `save_stage = …`（给条目挂上来源的阶段） |
 | `convert_danmaku_to_ass_events()` 合并段 | 按阶段分流；**没有 `merged` 来源时 `pending` 就是原表，老路径一行没变** |
 | `convert_danmaku_to_xml()` 开头 | 一个 3 行的转发；**下面是上游原样实现** |
+
+> 2026-10 上游把黑名单改成惰性加载的 `get_blacklist_patterns()` 之后，
+> `set_deps` 里传的不再是 `black_patterns` 表，而是取表的函数
+> `get_black_patterns`。这样用户在「弹幕屏蔽」里改完规则，保存 `filtered`
+> 会立刻用新规则，不需要重载脚本。
 
 `apis/dandanplay.lua` 里在 `add_danmaku_source_local()` 挂了一下阶段（2 行）。
 
@@ -596,12 +602,18 @@ save_danmaku_mode=merged
 
 ## 方式二：只给已有的 uosc_danmaku 打补丁
 
+> ⚠️ 2026-10 上游更新涉及 `menu.lua` / `parse.lua` / `utils.lua` / `main.lua`
+> 以及新增的 `modules/blacklist.lua`，还改了 `render.lua` 与两个 site。
+> 只想打补丁的话，这些文件必须**一起**更新，否则会出现「新菜单调旧函数」
+> 之类的半截状态。拿不准就用方式一整包覆盖。
+
 改动清单：
 
 | 文件 | 改动 | 属于哪个功能 |
 |---|---|---|
 | `modules/pakku.lua` | **新增**，算法本体（约 1400 行） | 功能一 |
 | `modules/save_danmaku.lua` | **新增**，保存模式的实现（上游没有这个文件，合并上游不冲突） | 功能三 |
+| `modules/blacklist.lua` | **上游新增**（2026-10 同步），黑名单文件读写与「弹幕屏蔽」菜单 | 上游 |
 | `modules/parse.lua` | 合并分支、标记加粗与字号处理；保存模式**只加了一个转发**，上游实现原样保留 | 功能一 + 三 |
 | `modules/options.lua` | 23 个 `pakku_*` + 3 个 `danmaku_*` + 1 个 `save_danmaku_*` 选项默认值 | 全部 |
 | `main.lua` | `require("modules/pakku")`、一键搜索键绑定、构建指纹 | 功能一 + 二 |
@@ -625,6 +637,23 @@ save_danmaku_mode=merged
 
 这些不是本项目新增的，但 `uosc_danmaku.conf` 里都有。**本仓库对其中几个
 改过值**（标 ⚠️），覆盖别人的配置时留意。
+
+## 2026-10 上游更新（本次合并）
+
+2026-10-26 上游并入了一批能力（搜索历史、黑名单编辑器、标题替换文件等），
+本项目把它们原样带过来，并逐处对齐了与自有改动重叠的 `menu.lua` / `parse.lua` /
+`utils.lua` / `main.lua`。
+
+| 能力 | 怎么用 | 相关选项 |
+|---|---|---|
+| **搜索历史** | 搜索菜单里列出最近搜过的关键词（去重置顶），点一下重新搜索；条目右侧按钮可单条删除 | `search_history_path`、`search_history_size` |
+| **黑名单编辑器** | 样式菜单里选「弹幕屏蔽」，可新建 / 添加 / 启停 / 修改 / 删除规则；保存后立即重载当前弹幕 | `blacklist_path` |
+| **标题替换规则文件** | `title_replace` 除了写 JSON 字符串，也可以直接写一个 `.json` 文件路径 | `title_replace` |
+| **剧集自动定位** | 打开剧集菜单时按当前文件名解析出的集数预选中对应集，并在 hint 前标 `▶` | — |
+| **拼写修正** | `message_anlignment` 已更名为 `message_alignment`，旧拼写不再读取 | `message_alignment` |
+
+> ⚠️ **升级提醒**：如果你在 `uosc_danmaku.conf` 里手写过 `message_anlignment`，
+> 请改成 `message_alignment`；不改也不会崩，只是消息位置回到默认的对齐方式。
 
 ## 加载行为
 
@@ -689,11 +718,13 @@ api_server=https://a.example.com|备用A,https://b.example.com#备用B
 | `merge_fontsize_max` | `100` | `100` | 上游合并的最大字号。**pakku 模式下不生效** |
 | `open_search_danmaku_menu_key` | `Ctrl+d` | 同左 | 打开搜索菜单的快捷键 |
 | `show_danmaku_keyboard_key` | `j` | 同左 | 打开弹幕开关面板的快捷键 |
-| `blacklist_path` | `""` | `""` | 屏蔽词文件（`black.txt`）路径，每行一条，支持 Lua 正则 |
-| `title_replace` | 见下 | 同左 | 标题解析的额外替换规则，JSON 字符串 |
+| `blacklist_path` | `""` | `""` | 屏蔽词文件路径。支持 `.txt`（每行一条）/ `.xml` / `.json`；可在样式菜单的「弹幕屏蔽」里直接编辑，保存后热重载 |
+| `title_replace` | 见下 | 同左 | 标题解析的额外替换规则：JSON 字符串，或一个 JSON 规则文件路径 |
 | `excluded_path` | `[]` | `[]` | 哈希匹配时要忽略的共享盘/挂载盘路径，多个用逗号分隔 |
-| `message_anlignment` | `7` | `7` | 脚本消息的对齐方式（上游拼写如此） |
+| `message_alignment` | `7` | `7` | 脚本消息的对齐方式（旧名为 `message_anlignment`，已废弃） |
 | `message_x` / `message_y` | `30` / `30` | 同左 | 脚本消息的坐标 |
+| `search_history_path` | `~~/danmaku-search-history.json` | 同左 | 搜索历史文件路径。**留空则禁用搜索历史** |
+| `search_history_size` | `15` | `15` | 搜索历史最多保留条数，`< 1` 表示不限制；超出时从最旧的开始丢 |
 
 `title_replace` 默认值：
 
@@ -703,6 +734,10 @@ title_replace=[{"rules":[{ "^〔(.-)〕": "%1"},{ "^.*《(.-)》": "%1" }]}]
 
 > ⚠️ 因为 mpv 的 Lua 版本限制，自定义规则**只支持 `%n` 捕获组写法**，
 > 不支持直接替换字符。
+>
+> 规则多到写不进一行时，把同样的 JSON 存成文件（如
+> `~~/script-opts/title_replace.json`），然后把 `title_replace`
+> 直接写成这个路径即可；文件读不到或解析失败会打一条警告并跳过替换。
 
 ---
 
@@ -900,11 +935,12 @@ script-message immediately_save_danmaku
 从 **0.8.7** 起，脚本启动时会打印一行：
 
 ```
-[uosc_danmaku] uosc_danmaku+pakku 2.2.0 build 6/209549/47053486
+[uosc_danmaku] uosc_danmaku+pakku 2.2.0 build 6/xxxxxx/xxxxxxxx
 ```
 
-它对 6 个关键文件（`main.lua` / `menu.lua` / `utils.lua` / `options.lua` /
-`parse.lua` / `dandanplay.lua`）做内容指纹。
+它对 9 个关键文件（`main.lua` / `menu.lua` / `utils.lua` / `options.lua` /
+`parse.lua` / `blacklist.lua` / `pakku.lua` / `save_danmaku.lua` /
+`dandanplay.lua`）做内容指纹。
 
 > **换了新脚本后这行没变，就是文件没拷全。** 之前吃过一次亏：只更新了
 > `utils.lua` 没更新 `menu.lua`，新旧混着跑，从现象上完全看不出来。

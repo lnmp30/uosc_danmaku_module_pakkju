@@ -47,19 +47,23 @@
 .
 ├── readme.md / project.md / changelog.md / THIRD-PARTY.md / LICENSE
 ├── test/
-│   └── auto_select_test.lua       功能二的单测
+│   ├── auto_select_test.lua       功能二的单测（47 项）
+│   ├── save_danmaku_test.lua      功能三的单测（66 项）
+│   └── docs_check.lua             文档与代码一致性检查（8 项）
 ├── testdata/                      回归用弹幕（3 集，20086 条）
 └── portable_config/
-    ├── scripts/uosc_danmaku/      宿主（vendored，MIT）
+    ├── scripts/uosc_danmaku/      宿主（vendored，MIT；2026-10 上游同步）
     │   ├── modules/pakku.lua      ★ 本项目新增
-    │   ├── modules/menu.lua       ● 功能二主要改动处
-    │   ├── modules/utils.lua      ● 工具 + 流程日志
-    │   ├── modules/parse.lua      ● 合并分支 / 标记渲染
+    │   ├── modules/save_danmaku.lua  ★ 本项目新增
+    │   ├── modules/menu.lua       ● 功能二主要改动处（含上游搜索历史/黑名单菜单）
+    │   ├── modules/utils.lua      ● 工具 + 流程日志（含上游搜索历史读写）
+    │   ├── modules/parse.lua      ● 合并分支 / 标记渲染 / 黑名单惰性加载
+    │   ├── modules/blacklist.lua  上游新增（本次同步）：黑名单文件读写
     │   ├── modules/options.lua    ● 选项默认值
     │   ├── main.lua               ● 构建指纹 / 一键搜索键绑定
-    │   └── apis/ sites/ dicts/    上游代码
+    │   └── apis/ sites/ dicts/    上游代码（本次同步 iqiyi/mgtv）
     └── script-opts/
-        └── uosc_danmaku.conf      pakku 段 + 无键盘段
+        └── uosc_danmaku.conf      pakku 段 + 无键盘段 + 保存段
 ```
 
 ---
@@ -127,14 +131,51 @@
 | 文件 | 职责 | 本项目改动 | 属于 |
 |---|---|---|---|
 | `modules/pakku.lua` | — | **新增**，算法本体 | 一 |
-| `modules/options.lua` | 选项默认值 | 23 个 `pakku_*` + 3 个 `danmaku_*` + `save_danmaku_mode` | 一 + 二 + 三 |
-| `modules/parse.lua` | 解析/合并/生成 ASS/导出 xml | 合并分支、标记加粗与字号分支、**保存模式**、`RENDERED_DANMAKU` 快照 | 一 + 三 |
-| `main.lua` | 入口、事件、脚本消息 | `require("modules/pakku")`、一键搜索键绑定、**构建指纹** | 一 + 二 |
-| `modules/utils.lua` | 通用工具 | `trace_osd` `brief_error` `http_error_hint` `get_media_filename` `build_fingerprint` | 主要二 |
-| `modules/menu.lua` | 菜单/搜索/选择 | `danmaku-quick-search`、**自动选择**、流程日志、去重 | 二 |
+| `modules/save_danmaku.lua` | — | **新增**，三种保存模式与阶段标签 | 三 |
+| `modules/blacklist.lua` | 黑名单文件读写 | **上游新增**（2026-10 同步），本项目无改动 | — |
+| `modules/options.lua` | 选项默认值 | 23 个 `pakku_*` + 3 个 `danmaku_*` + `save_danmaku_mode`；上游同步带入 `search_history_*` 与 `message_alignment` | 一 + 二 + 三 |
+| `modules/parse.lua` | 解析/合并/生成 ASS/导出 xml | 合并分支、标记加粗与字号分支、**保存模式**、`RENDERED_DANMAKU` 快照、黑名单惰性加载适配 | 一 + 三 |
+| `main.lua` | 入口、事件、脚本消息 | `require("modules/pakku")`、一键搜索键绑定、**构建指纹**；同步上游 `FALLBACK_TRIGGER` 与历史源数据保留（并额外保留 `stage`） | 一 + 二 |
+| `modules/utils.lua` | 通用工具 | `trace_osd` `brief_error` `http_error_hint` `get_media_filename` `build_fingerprint`；同步上游 `split_lines` `write_file` 与搜索历史 | 主要二 |
+| `modules/menu.lua` | 菜单/搜索/选择 | `danmaku-quick-search`、**自动选择**、流程日志、去重；同步上游搜索历史 UI、黑名单编辑器、剧集预选、结果汇总行 | 二 |
 | `apis/dandanplay.lua` | 弹弹play 接口 | 失败原因上屏、日志级别提升 | 二 |
 | `apis/extra.lua` | 其它源 | 日志级别提升 | 二 |
+| `sites/iqiyi.lua` / `sites/mgtv.lua` | 站点解析 | 上游同步（临时文件清理、失败回调） | — |
 | `script-opts/uosc_danmaku.conf` | 用户配置 | pakku 段 + 无键盘段 + 保存段 | 一 + 二 + 三 |
+
+### 4.1 2026-10 上游同步记录
+
+这次同步的上游区间是 **`132e198`（2026-08-26）→ `e235480`（2026-10-26）**，
+上游仓库是 `dyphire/mpv-config`（其中 vendored 的 `scripts/uosc_danmaku/`）。
+只有一个上游提交改了本插件，但内容不少：
+
+| 上游改动 | 落点 | 本项目怎么处理 |
+|---|---|---|
+| 新增黑名单编辑器 | `modules/blacklist.lua` + `menu.lua` + `parse.lua` 惰性加载 | 新文件直接引入；`parse` 的旧 `black_patterns` 局部量删除，改由 `get_blacklist_patterns()` 提供 |
+| 搜索历史 | `options.lua` 两个新选项 + `utils.lua` 读写 + `menu.lua` 搜索菜单 | 原样合并；保存 `filtered` 改用 getter 取最新规则 |
+| `input_open()` 包装 | `menu.lua` 顶部 | 原样合并，自动选择路径不受影响 |
+| 搜索结果汇总行 / 失败源计数 | `menu.lua` 的 `do_final_update()` | 保留本项目「自动选择命中即返回」；只有走菜单路径才插汇总行 |
+| 剧集自动定位 | `menu.lua` 的 `get_episodes()` | 与 `pick_auto_item()` 并存：自动选择关闭时用它预选，开启时仍走集数匹配 |
+| `title_replace` 支持文件路径 | `utils.lua` | 原样合并 |
+| `message_anlignment` → `message_alignment` | `options.lua` / `render.lua` | 原样合并；conf/文档同步改名 |
+| 历史源保留已加载数据 | `main.lua` | 在保留 `data` 的基础上额外保留 `stage`，否则阶段标签会被历史记录覆盖 |
+| iqiyi 退出时清理临时文件 | `sites/iqiyi.lua` | 上游把 `mp.utils.readdir()` 的数组当 map 遍历（`pairs`），退出时会抛 Lua error；这里改成 `ipairs(entries)` |
+
+合并方式：以上游 `132e198` 为 base、本项目工作区为 ours、`e235480` 为 theirs，
+对 6 个重叠文件跑 `git merge-file`，再逐个人工解冲突（共 7 处）。
+`blacklist.lua`、`render.lua`、`iqiyi.lua`、`mgtv.lua` 四个文件本项目没动过，
+直接取上游版本。
+
+**下次再合并上游时，重点看这几处**（都是本项目改过、上游也在动的）：
+
+1. `menu.lua` 的 `make_handle_response()` / `do_final_update()`：自动选择与上游的
+   `ctx.rendered`、汇总行、`render_final` 兜底要同时成立。
+2. `menu.lua` 的 `open_menu_select()`：本项目在函数开头拦自动选择，
+   上游可能继续加参数（本次加了 `default_item`）。
+3. `parse.lua` 的 `set_deps{}`：上游把依赖从局部表改成函数时，记得同步
+   `save_danmaku.lua` 里的取值方式。
+4. `main.lua` 的 `read_danmaku_source_record()`：上游在这里保留 `data` 时，
+   本项目的 `stage` 也要一起保留。
 
 ---
 
@@ -526,7 +567,7 @@ uosc 的 `Menu.lua` 支持 `search_submit`，加上去就能让搜索菜单**打
 | 机制 | 位置 | 说明 |
 |---|---|---|
 | `trace_osd()`（`[flow]` 行） | `utils.lua` | **永远写 `msg.info`**，只有 OSD 部分受 `danmaku_verbose_osd` 门控 |
-| 构建指纹 | `main.lua` 启动时 | 6 个关键文件的内容哈希 |
+| 构建指纹 | `main.lua` 启动时 | 9 个关键文件的内容哈希（含 pakku / save_danmaku / blacklist） |
 | `http_error_hint()` | `utils.lua` | 把 curl 退出码翻成人话 |
 | `finish()` | `menu.lua` | 收尾只跑一次 + 异常不再被 `pcall` 静默吞掉 |
 
@@ -613,23 +654,24 @@ RENDERED_DANMAKU = danmakus
 | 快照赋值 | `convert_danmaku_to_ass_events()` 里 1 行 | 单行新增 |
 | 依赖注入 | `is_blacklisted()` 之后一次 `set_deps{}` | 见下 |
 
-**为什么需要依赖注入**：`black_patterns` 和 `make_delay_lookup` 是 `parse.lua`
-的 **local**，新模块拿不到。把它们提升成全局算「改上游代码」，
+**为什么需要依赖注入**：`make_delay_lookup` 是 `parse.lua`
+的 **local**，新模块拿不到。把它提升成全局算「改上游代码」，
 所以改成由 `parse.lua` 主动传进去：
 
 ```lua
 save_ext.set_deps({
-    get_sources       = function() return DANMAKU.sources end,
-    get_rendered      = function() return RENDERED_DANMAKU end,
-    black_patterns    = black_patterns,
-    is_blacklisted    = is_blacklisted,
-    make_delay_lookup = make_delay_lookup,
+    get_sources        = function() return DANMAKU.sources end,
+    get_rendered       = function() return RENDERED_DANMAKU end,
+    get_black_patterns = get_blacklist_patterns,   -- 2026-10 上游改为惰性加载
+    is_blacklisted     = is_blacklisted,
+    make_delay_lookup  = make_delay_lookup,
 })
 ```
 
 `get_sources` / `get_rendered` 必须是 getter —— 这两个值会被**整体替换**
 （卸载时 `DANMAKU = {sources={}}`，渲染时 `RENDERED_DANMAKU = danmakus`），
-捕获引用会拿到旧表。
+捕获引用会拿到旧表。黑名单也一样：上游改成 `get_blacklist_patterns(force)`
+之后，传当时的表会在用户编辑屏蔽词后失效，所以传取表的函数。
 
 > ⚠️ `set_deps` 必须放在 `is_blacklisted` 定义**之后**。它是全局函数，
 > 在此之前还是 `nil` —— 这个坑我踩过一次（注入到 nil，filtered 直接崩）。
@@ -651,7 +693,7 @@ function convert_danmaku_to_xml(danmaku_out)
 这样 shim 只有两行，上游函数的头尾都不需要改。
 
 **标记约定**：`parse.lua` 里本项目新增/改动的地方都带 `★`，
-`grep '★' modules/parse.lua` 能一次列全（共 4 处）。
+`grep '★' modules/parse.lua` 能一次列全（共 8 处）。
 
 ### 7.4 阶段标签：让保存出来的文件可以被安全地「再打开」
 
@@ -890,11 +932,11 @@ M.normalize / M.check_similar / enlarge_scale / adjust_density 等
 4. 在用到它的函数里消费
 
 **文档同步**：`readme.md` 的选项全表也要加一行。
-可以用下面这条命令自查有没有漏（它把 `options.lua` 里的选项名和 `readme.md`
-做双向核对）：
+改完直接跑文档检查（它把 `options.lua` 里的选项名、默认值、函数名和
+`readme.md` / `project.md` 双向核对）：
 
-```bash
-# 见 changelog 0.8.x 的交叉核对脚本；核心是拿 `选项名` 去 readme 里找
+```powershell
+.\luajit.exe test\docs_check.lua
 ```
 
 ---

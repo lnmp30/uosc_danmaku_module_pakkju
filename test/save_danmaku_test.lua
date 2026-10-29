@@ -62,7 +62,7 @@ local save = assert(loadfile(MOD))()
 save.set_deps({
     get_sources       = function() return SOURCES end,
     get_rendered      = function() return RENDERED end,
-    black_patterns    = { "BLOCKED" },
+    get_black_patterns = function() return { "BLOCKED" } end,
     is_blacklisted    = function(text) return text == "BLOCKED" end,
     make_delay_lookup = function() return function() return 0 end end,
 })
@@ -155,7 +155,7 @@ print("== split_by_stage / rejoin：已合并的来源不参与合并 ==")
 local real_deps = {
     get_sources       = function() return SOURCES end,
     get_rendered      = function() return RENDERED end,
-    black_patterns    = { "BLOCKED" },
+    get_black_patterns = function() return { "BLOCKED" } end,
     is_blacklisted    = function(text) return text == "BLOCKED" end,
     make_delay_lookup = function() return function() return 0 end end,
 }
@@ -166,7 +166,7 @@ local srcs = {
 save.set_deps({
     get_sources       = function() return srcs end,
     get_rendered      = function() return RENDERED end,
-    black_patterns    = { "BLOCKED" },
+    get_black_patterns = function() return { "BLOCKED" } end,
     is_blacklisted    = function(text) return text == "BLOCKED" end,
     make_delay_lookup = function() return function() return 0 end end,
 })
@@ -253,7 +253,7 @@ _G.DANMAKU = nil
 save.set_deps({
     get_sources       = function() return { ["s3"] = keep["s3"] } end,
     get_rendered      = function() return RENDERED end,
-    black_patterns    = { "BLOCKED" },
+    get_black_patterns = function() return { "BLOCKED" } end,
     is_blacklisted    = function(text) return text == "BLOCKED" end,
     make_delay_lookup = function() return function() return 0 end end,
 })

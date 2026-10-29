@@ -17,12 +17,85 @@
 | 版本号 | 位置 | 说明 |
 |---|---|---|
 | `uosc_danmaku` **2.2.0** | `portable_config/scripts/uosc_danmaku/main.lua:1` | 上游版本，本项目**未改动** |
-| 本项目 **0.1.0** | 本文件 | pakku 移植的版本 |
+| 本项目 **0.10.0** | 本文件 | pakku 移植的版本 |
 
 也就是说：`main.lua` 里的 `VERSION` 仍然报 2.2.0。
 如果希望 mpv 脚本消息里也能看出多了 pakku，可以自行改成
 `2.2.0+pakku.1`（`mp.commandv('script-message', 'uosc_danmaku-version', VERSION)`
 会把它广播给 uosc 的按钮提示）。
+
+---
+
+## [0.10.0] - 2026-10-29
+
+**同步上游 `132e198`（2026-08-26）→ `e235480`（2026-10-26）的 uosc_danmaku 更新。**
+本次没有改 pakku 算法，主要把上游新增的「搜索历史 / 黑名单编辑器 /
+标题替换文件 / 剧集预选」合并进来，并把与自有改动重叠的地方逐个对齐。
+
+### 新增（来自上游）
+
+- **搜索历史**：搜索菜单里列出最近搜过的关键词（去重置顶），
+  点一下直接重搜；条目右侧的删除按钮可单条移除。新增两个选项：
+
+  ```ini
+  search_history_path=~~/danmaku-search-history.json   # 留空禁用
+  search_history_size=15                               # <1 不限制
+  ```
+
+- **黑名单编辑器**：样式菜单里新增「弹幕屏蔽」，可新建 / 添加 / 启停 /
+  修改 / 删除规则，写盘后立即重载当前弹幕。`blacklist_path` 现在支持
+  `.txt` / `.xml` / `.json` 三种格式。
+- **`title_replace` 支持规则文件**：除 JSON 字符串外，也可直接写成
+  `~~/script-opts/title_replace.json` 这样的文件路径。
+- **剧集自动定位**：打开剧集菜单时按文件名解析出的集数预选中对应集，
+  hint 前带 `▶`。
+- **搜索结果汇总行**：菜单首行显示「共 N 个结果」，并标出失败的源数量。
+- `input_open()` 包装：兼容 mpv 新旧 `mp.input` 事件（上游内部实现）。
+
+### 修改
+
+- `message_anlignment` → **`message_alignment`**（上游修正拼写）。
+  旧拼写不再读取：conf 里写旧名不会导致脚本崩溃，但消息位置会回到默认值。
+- `parse.lua` 的黑名单从「加载时一次读入」改为**惰性加载**
+  `get_blacklist_patterns(force)`。编辑屏蔽词后无需重载脚本即可生效。
+- `save_danmaku.lua` 的依赖注入随之改为 `get_black_patterns`
+  （传函数而不是当时的表）。保存 `filtered` 会使用最新规则。
+- `main.lua` 读历史源时，上游开始保留已加载的 `data`；本项目额外保留
+  `stage`，避免阶段标签被历史记录覆盖。
+
+### 修复（合并冲突的人工整合）
+
+- `menu.lua` 的 `do_final_update()` 同时保留：自动选择命中即返回、
+  上游 `ctx.rendered` 只渲染一次、汇总行只在菜单路径插入。
+- 「先到先显示」路径：自动选择开启时整段跳过，并额外加 `ctx.rendered` 兜底，
+  避免 0.9.x 之前那种「选两次、第二次把第一次请求掐掉」。
+- 多服务器失败时仍保留本项目的 `http_error_hint` 日志，同时累加上游的
+  `failed_servers` 计数供汇总行使用。
+- `utils.lua` 合并后出现两行 `local msg`，保留本项目带注释的一行，
+  避免 lint 级别的重复声明。
+- `save_danmaku_test.lua` 的依赖桩同步改为 `get_black_patterns`。
+- **修掉上游 `sites/iqiyi.lua` 的一个退出期崩溃**：上游把
+  `mp.utils.readdir()` 返回的数组当成 map 用 `pairs()` 遍历，
+  `on_unload` 清理临时文件时会抛
+  `attempt to index local 'name' (a number value)`。改成 `ipairs(entries)`。
+  实测 mpv 退出时日志里原本每次都会出现这条 Lua error。
+
+### 验证
+
+```powershell
+.\luajit.exe test\auto_select_test.lua    # 47 项通过
+.\luajit.exe test\save_danmaku_test.lua   # 66 项通过
+.\luajit.exe test\docs_check.lua          # 8 项通过
+```
+
+三个测试全绿；所有 Lua 文件用 `luajit -e "assert(loadfile(...))"` 过了一遍语法。
+
+### 升级提醒
+
+- 整包覆盖 `portable_config/scripts/uosc_danmaku/` 与
+  `portable_config/script-opts/uosc_danmaku.conf`。本次上游新增了
+  `modules/blacklist.lua`，只拷旧清单里的文件会缺模块。
+- 手写过 `message_anlignment` 的，请改名。
 
 ---
 

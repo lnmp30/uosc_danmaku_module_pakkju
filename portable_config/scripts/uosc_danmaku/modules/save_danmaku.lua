@@ -35,9 +35,10 @@ local M = {}
 -- ---------------------------------------------------------------------------
 -- 依赖注入
 --
--- black_patterns / make_delay_lookup 是 parse.lua 的 **local**，外部拿不到；
--- 与其把它们提升成全局（那是改上游代码），不如由 parse.lua 主动传进来。
--- 两个 getter 是因为对应的值会被整体替换，不能捕获当时的引用。
+-- make_delay_lookup 是 parse.lua 的 **local**，外部拿不到；
+-- 与其把它提升成全局（那是改上游代码），不如由 parse.lua 主动传进来。
+-- 黑名单从上游 2026-10 起改为惰性加载（get_blacklist_patterns），
+-- 所以传的是取规则表的函数，保证用户改完黑名单后保存 filtered 立刻生效。
 -- ---------------------------------------------------------------------------
 local deps = nil
 
@@ -135,7 +136,7 @@ function M.collect(filter_blacklist)
 
             for _, item in ipairs(source.data) do
                 local dropped = filter_blacklist
-                    and d.is_blacklisted(item.text, d.black_patterns)
+                    and d.is_blacklisted(item.text, d.get_black_patterns())
                 if not dropped then
                     local base_time = item.orig_time or item.time
                     list[#list + 1] = {
